@@ -2,5 +2,3 @@
 .plotENV
 .vscode
 build/
-sdkconfig
-sdkconfig.old
