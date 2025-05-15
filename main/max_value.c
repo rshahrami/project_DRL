@@ -1,0 +1,57 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#include <stdio.h>
+#include <stdint.h>
+#include <math.h>
+
+double signal_diff = 0.0;
+double max_value_signal_diff = 0.0;
+double signal_diff_prev = 0.0;
+double out_mux_signal_diff =0.0;
+double increasing = 0.0;  // 0.0 = false, 1.0 = true
+
+double signal_common = 0.0;
+double out_mux_signal_common =0.0;
+double max_value_signal_common = 0.0;
+double signal_common_prev = 0.0;
+
+
+/////////////////////////////////////////////////////////////////////////////
+double max_signal_diff(float signal) {
+    if (signal >= 0) {
+        if (signal > signal_diff_prev) {
+            signal_diff_prev = signal;
+            increasing = 1.0;  // true
+        } else {
+            if (increasing > 0.5) {  
+                max_value_signal_diff = signal_diff_prev;
+                increasing = 0.0;  // false
+            }
+            signal_diff_prev = signal;
+        }
+    } else {
+        signal_diff_prev = 0.0;
+        increasing = 0.0;  // false
+    }
+    return max_value_signal_diff;
+}
+
+////////////////////////////////////////////////////////////////////////////
+double max_signal_common(float signal) {
+    if ( signal >= 0){
+   	 if ( signal > signal_common_prev ){
+		signal_common_prev = signal;
+   	 }
+   	 else{
+		max_value_signal_common = signal_common_prev;
+   	 }
+    }
+    else{
+	signal_common_prev = 0;
+    }
+    return max_value_signal_common;
+}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,0 +1,69 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#include <stdio.h>
+#include <stdint.h>
+#include <math.h>
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+#define SIGNAL_FREQ 50.0
+#define SAMPLE_RATE 1000000.0
+#define PI 3.141592653589793f
+
+static float filter_alpha = 0.0;
+static float filter_x_prev = 0.0;
+static float filter_y_prev = 0.0; 
+
+static float current_gain_a = 1.0;
+static float current_gain_b = 0.0;
+
+////////////////////////////////////////////////////////////////////////////////////////////
+void setup_phase_shifter() {
+    float omega0 = 2.0 * PI * SIGNAL_FREQ; 
+    float T = 1.0 / SAMPLE_RATE;      
+    float omega0_T = omega0 * T;
+
+    // alpha = (w0*T - 2) / (w0*T + 2)
+    filter_alpha = (omega0_T - 2.0) / (omega0_T + 2.0);
+
+
+    filter_x_prev = 0.0;
+    filter_y_prev = 0.0;
+    current_gain_a = 1.0;
+    current_gain_b = 0.0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+void set_phase_shift_degrees(float desired_phase_degrees) {
+
+    if (desired_phase_degrees < 0.0) desired_phase_degrees = 0.0;
+    if (desired_phase_degrees > 180.0) desired_phase_degrees = 180.0;
+
+    float desired_phase_radians = desired_phase_degrees * PI / 180.0;
+
+    current_gain_a = cos(desired_phase_radians);
+    current_gain_b = -sin(desired_phase_radians);
+
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+float process_sample(float x_n) {
+
+    // y[n] = alpha*x[n] + x[n-1] - alpha*y[n-1]
+    float y_n = filter_alpha * x_n + filter_x_prev - filter_alpha * filter_y_prev;
+
+    filter_x_prev = x_n;
+    filter_y_prev = y_n;
+
+    // output = a * I + b * Q
+    // output = current_gain_a * x_n + current_gain_b * y_n
+    float output_sample = current_gain_a * x_n + current_gain_b * y_n;
+
+    return output_sample;
+}
