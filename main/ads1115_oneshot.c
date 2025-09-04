@@ -40,27 +40,21 @@ esp_err_t ads1115_init(ads1115_ctx_t *ctx,
     /* لایه‌ی مشترک i2cdev (ایمن برای چندبار فراخوانی) */
     ESP_RETURN_ON_ERROR(i2cdev_init(), TAG, "i2cdev_init");
 
-    // ←← همینجا می‌تونی تنظیمات I2C dev رو بنویسی
+    /* قبل از ساخت دیسکریپتور، همه‌ی فیلدهای موردنیاز را ست کن تا init_desc همان را به‌کار بگیرد */
     ctx->dev.port = port;
     ctx->dev.addr = addr;
     ctx->dev.cfg.sda_io_num = sda;
     ctx->dev.cfg.scl_io_num = scl;
     ctx->dev.cfg.master.clk_speed = 400000;   // سرعت باس I²C روی 400kHz
 
-    /* ساخت دیسکریپتور دستگاه */
+    /* ساخت دیسکریپتور ADS1115 با تنظیمات بالا (I2C NG) */
     ESP_RETURN_ON_ERROR(ads111x_init_desc(&ctx->dev, addr, port, sda, scl), TAG, "init_desc");
+    ESP_LOGI(TAG, "I2C clock set to 400 kHz via i2cdev (NG)");
 
-    /* ↓↓↓ خیلی مهم: سرعت باس I2C را کم می‌کنیم (ADS1115 حداکثر 400kHz) */
-    /* بیشتر نسخه‌های i2cdev این تابع را دارند. اگر نسخه‌ی شما نام دیگری داشت بگویید تا وفق بدهم. */
-    // ESP_RETURN_ON_ERROR(i2cdev_set_speed(&ctx->dev, 100000), TAG, "set_speed_100k");
-    // اگر بعداً خواستید 400kHz:
-    // ESP_RETURN_ON_ERROR(i2cdev_set_speed(&ctx->dev, 400000), TAG, "set_speed_400k");
-
-    /* ذخیره‌ی تنظیمات تبدیل */
+    /* پارامترهای تبدیل را ذخیره و روی تراشه اعمال کن */
     ctx->gain = gain;
     ctx->dr   = dr;
 
-    /* تنظیمات پیش‌فرض برای تبدیل‌های بعدی */
     ESP_RETURN_ON_ERROR(ads111x_set_gain(&ctx->dev, ctx->gain), TAG, "set_gain");
     ESP_RETURN_ON_ERROR(ads111x_set_data_rate(&ctx->dev, ctx->dr), TAG, "set_dr");
     ESP_RETURN_ON_ERROR(ads111x_set_mode(&ctx->dev, ADS111X_MODE_SINGLE_SHOT), TAG, "set_mode");
