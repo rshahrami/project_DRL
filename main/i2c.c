@@ -41,11 +41,11 @@ ads1115_t ads1115_cfg = {
               ADS1115_CFG_LS_COMP_POL_LOW |   // Alert is active low
               ADS1115_CFG_LS_COMP_QUE_DIS |   // Compator is disabled
               ADS1115_CFG_LS_DR_128SPS |     // No. of samples to take
+              // ADS1115_CFG_MS_PGA_FSR_0_256V |         // Mode is set to single-shot
               ADS1115_CFG_MS_PGA_FSR_0_256V |         // Mode is set to single-shot
               ADS1115_CFG_MS_MODE_SS,
   .dev_addr = 0x48,
 };
-
 
 // void xADS1115_thred(void *arg); // FreeRTOS task for ADC loop
 
