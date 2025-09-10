@@ -1,4 +1,4 @@
-// main/ads1115_oneshot.c
+// main/ads1115_oneshot_optimized.c
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,11 +15,11 @@ static const char *TAG = "ads1115_mod";
 static inline float fsr_volts(ads111x_gain_t g)
 {
     switch (g) {
-        case ADS111X_GAIN_6V144:  return 6.144f;
-        case ADS111X_GAIN_4V096:  return 4.096f;
-        case ADS111X_GAIN_2V048:  return 2.048f;
-        case ADS111X_GAIN_1V024:  return 1.024f;
-        case ADS111X_GAIN_0V512:  return 0.512f;
+        case ADS111X_GAIN_6V144: return 6.144f;
+        case ADS111X_GAIN_4V096: return 4.096f;
+        case ADS111X_GAIN_2V048: return 2.048f;
+        case ADS111X_GAIN_1V024: return 1.024f;
+        case ADS111X_GAIN_0V512: return 0.512f;
         case ADS111X_GAIN_0V256:
         case ADS111X_GAIN_0V256_2:
         case ADS111X_GAIN_0V256_3: return 0.256f;
@@ -37,21 +37,20 @@ esp_err_t ads1115_init(ads1115_ctx_t *ctx,
 {
     if (!ctx) return ESP_ERR_INVALID_ARG;
 
-    /* لایه‌ی مشترک i2cdev (ایمن برای چندبار فراخوانی) */
+    // لایه‌ی مشترک i2cdev
     ESP_RETURN_ON_ERROR(i2cdev_init(), TAG, "i2cdev_init");
 
-    /* قبل از ساخت دیسکریپتور، همه‌ی فیلدهای موردنیاز را ست کن تا init_desc همان را به‌کار بگیرد */
     ctx->dev.port = port;
     ctx->dev.addr = addr;
     ctx->dev.cfg.sda_io_num = sda;
     ctx->dev.cfg.scl_io_num = scl;
-    ctx->dev.cfg.master.clk_speed = 400000;   // سرعت باس I²C روی 400kHz
+    ctx->dev.cfg.master.clk_speed = 100000; // I2C 400 kHz
 
-    /* ساخت دیسکریپتور ADS1115 با تنظیمات بالا (I2C NG) */
+    // ساخت دیسکریپتور ADS1115
     ESP_RETURN_ON_ERROR(ads111x_init_desc(&ctx->dev, addr, port, sda, scl), TAG, "init_desc");
-    ESP_LOGI(TAG, "I2C clock set to 400 kHz via i2cdev (NG)");
+    ESP_LOGI(TAG, "I2C initialized at 400 kHz (Pull-ups assumed)");
 
-    /* پارامترهای تبدیل را ذخیره و روی تراشه اعمال کن */
+    // پارامترهای conversion را یکبار ست کن
     ctx->gain = gain;
     ctx->dr   = dr;
 
@@ -83,30 +82,26 @@ esp_err_t ads1115_read_single_ended(ads1115_ctx_t *ctx, int channel, int16_t *ra
     ads111x_mux_t mux;
     ESP_RETURN_ON_ERROR(mux_from_channel(channel, &mux), TAG, "bad_channel");
 
-    /* انتخاب ورودی و پارامترها برای این تک‌شات */
+    // فقط mux را تغییر بده و conversion شروع شود
     ESP_RETURN_ON_ERROR(ads111x_set_input_mux(&ctx->dev, mux), TAG, "set_mux");
-    ESP_RETURN_ON_ERROR(ads111x_set_gain(&ctx->dev, ctx->gain), TAG, "set_gain");
-    ESP_RETURN_ON_ERROR(ads111x_set_data_rate(&ctx->dev, ctx->dr), TAG, "set_dr");
-    ESP_RETURN_ON_ERROR(ads111x_set_mode(&ctx->dev, ADS111X_MODE_SINGLE_SHOT), TAG, "set_mode");
+    ESP_RETURN_ON_ERROR(ads111x_start_conversion(&ctx->dev), TAG, "start_conversion");
 
-    /* شروع تبدیل (OS=1) */
-    ESP_RETURN_ON_ERROR(ads111x_start_conversion(&ctx->dev), TAG, "start");
-
-    /* پولینگ تا پایان تبدیل */
+    // پولینگ کوتاه و سریع
     bool busy = true;
     while (busy) {
         ESP_RETURN_ON_ERROR(ads111x_is_busy(&ctx->dev, &busy), TAG, "busy");
-        vTaskDelay(pdMS_TO_TICKS(2));
+        // بدون vTaskDelay طولانی، فقط yield کوتاه
+        taskYIELD();
     }
 
-    /* خواندن مقدار خام */
+    // خواندن مقدار خام
     ESP_RETURN_ON_ERROR(ads111x_get_value(&ctx->dev, raw), TAG, "get_value");
 
-    /* تبدیل به ولتاژ (ولت) */
+    // تبدیل به ولتاژ
     if (volts) {
-        float fsr = fsr_volts(ctx->gain);            // ±FSR
-        *volts = ((float)(*raw) / 32768.0f) * fsr;   // اسکیل به ولت
-        if (*volts < 0) *volts = 0;                  // برای single-ended نویز منفی کوچک را صفر کن
+        float fsr = fsr_volts(ctx->gain);
+        *volts = ((float)(*raw) / 32768.0f) * fsr;
+        if (*volts < 0) *volts = 0; // نویز منفی کوچک صفر شود
     }
 
     return ESP_OK;
