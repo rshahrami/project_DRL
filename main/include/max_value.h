@@ -7,6 +7,7 @@ typedef struct {
     float prev;
     float max_val;
     bool increasing;
+    bool started;
 } PeakTracker;
 
 void initPeakTracker(PeakTracker* tracker);
