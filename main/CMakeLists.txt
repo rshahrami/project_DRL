@@ -1,23 +1,8 @@
-# main/CMakeLists.txt
-# این CMake داخل کامپوننت main اجرا می‌شود
-# فایل‌های .c از فولدر src/ را پیدا کرده و به component اضافه می‌کنیم
-# main/CMakeLists.txt
-# همه فایل‌های .c در src/ این کامپوننت اضافه می‌شوند
-# main/CMakeLists.txt
-
-# جمع‌آوری تمام فایل‌های .c و .cpp داخل src
-file(GLOB_RECURSE MAIN_SRC_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
-)
-
-# اضافه کردن main.c به لیست فایل‌ها
-set(MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/main.c ${MAIN_SRC_FILES})
-
+file(GLOB_RECURSE SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c")
 idf_component_register(
-    SRCS ${MAIN_SRC}      # همه فایل‌های source
-    INCLUDE_DIRS "include"  # مسیر headerها
-    REQUIRES driver         # اگر به driver نیاز دارد
+    SRCS "main.c" ${SOURCES}
+    INCLUDE_DIRS "include"
+    REQUIRES driver
 )
 
 
