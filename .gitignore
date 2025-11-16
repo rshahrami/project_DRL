@@ -2,4 +2,5 @@
 .plotENV
 .vscode
 build/
-Putty/
+putty.exe
+putty.log
