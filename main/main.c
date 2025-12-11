@@ -72,7 +72,8 @@ void reader_task(void *arg)
     while (1) {
         if (ads131_wait_drdy(&dev, pdMS_TO_TICKS(1000))) {
             if (ads131_read_frame_raw(&dev, samples, 4) == ESP_OK) {
-                ESP_LOGI(TAG, "S: %d %d %d %d", samples[0], samples[1], samples[2], samples[3]);
+                // ESP_LOGI(TAG, "S: %d %d %d %d", samples[0], samples[1], samples[2], samples[3]);
+                ESP_LOGI(TAG, "com: %d diff: %d", samples[1], samples[2]);
             } else {
                 ESP_LOGE(TAG, "Read frame failed");
             }
