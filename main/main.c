@@ -15,6 +15,7 @@
 #include "ads131.h"
 
 #define RMT_TX_GPIO 17
+#define OSR_8k_VALUE 0x3000
 static const char *TAG = "main";
 
 void rmt_task(void *arg)
@@ -66,14 +67,20 @@ void reader_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
-
-    int32_t samples[4];
+    ESP_LOGI(TAG, "Setting CLOCK register to 0x%04X for ~4kSPS", OSR_8k_VALUE);
+    if (ads131_write_register(&dev, 0x00, OSR_8k_VALUE) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write CLOCK register");
+    }
+    ads131_command(&dev, 0x11); // SDATAC command (Stop Data Continuous)
+    ads131_command(&dev, 0x10); // RDATAC command (Restart Data Continuous)
+    
+    int32_t samples[5];
 
     while (1) {
         if (ads131_wait_drdy(&dev, pdMS_TO_TICKS(1000))) {
-            if (ads131_read_frame_raw(&dev, samples, 4) == ESP_OK) {
+            if (ads131_read_frame_raw(&dev, samples, 5) == ESP_OK) {
                 // ESP_LOGI(TAG, "S: %d %d %d %d", samples[0], samples[1], samples[2], samples[3]);
-                ESP_LOGI(TAG, "com: %d diff: %d", samples[1], samples[2]);
+                ESP_LOGI(TAG, "com: %d diff: %d", samples[2], samples[3]);
             } else {
                 ESP_LOGE(TAG, "Read frame failed");
             }
