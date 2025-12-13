@@ -193,3 +193,55 @@ esp_err_t ads131_read_frame_raw(ads131_t *dev, int32_t *out_samples, size_t chan
     }
     return ESP_OK;
 }
+
+
+// ads131.c
+// ... (ادامه کدهای موجود) ...
+
+/*
+ * تنظیم نرخ داده (Data Rate) با تغییر مقدار OSR در رجیستر CLOCK (آدرس 0x00).
+ * این نرخ‌ها برای f_CLKIN = 2MHz و PowerMode=High-Resolution محاسبه شده‌اند.
+ * OSR = 1,000,000 / f_DATA
+ * (مقادیر OSR بر اساس دیتاشیت ADS131M04/08:
+ * OSR=1024 -> 0x8000
+ * OSR=256  -> 0x4000 (نزدیک به 4kSPS)
+ * OSR=128  -> 0x3000 (نزدیک به 8kSPS)
+*/
+esp_err_t ads131_set_data_rate(ads131_t *dev, ads131_data_rate_t rate)
+{
+    uint16_t clock_value = 0x0000;
+    
+    switch (rate) {
+        case ADS131_RATE_976SPS:
+            clock_value = 0x8000; // OSR=1024 (Default)
+            break;
+        case ADS131_RATE_3906SPS:
+            clock_value = 0x4000; // OSR=256 -> 3906.25 SPS
+            break;
+        case ADS131_RATE_7812SPS:
+            clock_value = 0x3000; // OSR=128 -> 7812.5 SPS
+            break;
+        default:
+            ESP_LOGE(TAG, "Invalid data rate selected");
+            return ESP_ERR_INVALID_ARG;
+    }
+    
+    // 1. دستور توقف خواندن مداوم داده (SDATAC: Stop Data Continuous)
+    // اگر در حالت RDATAC باشیم، باید با این دستور آن را متوقف کنیم تا بتوانیم بنویسیم.
+    esp_err_t ret = ads131_command(dev, 0x11); 
+    if (ret != ESP_OK) return ret;
+
+    // 2. نوشتن مقدار OSR جدید در رجیستر CLOCK (آدرس 0x00)
+    ret = ads131_write_register(dev, 0x00, clock_value);
+    if (ret != ESP_OK) return ret;
+    
+    ESP_LOGI(TAG, "Set OSR to 0x%04X (Rate: %d)", clock_value, rate);
+
+    // 3. مجدداً دستور شروع خواندن مداوم داده (RDATAC: Restart Data Continuous)
+    ret = ads131_command(dev, 0x10); 
+    
+    // ADS131M04 نیاز به زمان کمی پس از تغییر OSR دارد
+    vTaskDelay(pdMS_TO_TICKS(1)); 
+
+    return ret;
+}

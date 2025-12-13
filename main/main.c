@@ -1,11 +1,4 @@
 
-
-
-
-
-
-
-
 /////////////////////////////////////////////////////////////////////////////////////////
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
@@ -67,13 +60,11 @@ void reader_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
-    ESP_LOGI(TAG, "Setting CLOCK register to 0x%04X for ~4kSPS", OSR_8k_VALUE);
-    if (ads131_write_register(&dev, 0x00, OSR_8k_VALUE) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to write CLOCK register");
+
+    if (ads131_set_data_rate(&dev, ADS131_RATE_7812SPS) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set data rate to 8kSPS!");
     }
-    ads131_command(&dev, 0x11); // SDATAC command (Stop Data Continuous)
-    ads131_command(&dev, 0x10); // RDATAC command (Restart Data Continuous)
-    
+
     int32_t samples[5];
 
     while (1) {
