@@ -4,3 +4,4 @@
 build/
 putty.exe
 putty.log
+*64bit_putty.exe
