@@ -37,6 +37,7 @@ esp_err_t ads131_init(
     int spi_freq_hz
 );
 
+esp_err_t ads131_set_gain_1_all(ads131_t *dev);
 esp_err_t ads131_set_data_rate(ads131_t *dev, ads131_data_rate_t rate);
 esp_err_t ads131_command(ads131_t *dev, uint16_t cmd);
 bool ads131_wait_drdy(ads131_t *dev, TickType_t timeout);

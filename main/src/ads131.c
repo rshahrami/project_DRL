@@ -2,7 +2,50 @@
 #include "esp_log.h"
 #include <string.h>
 
+
+#define ADS131_REG_CH0_CFG   0x05
+#define ADS131_REG_CH1_CFG   0x06
+#define ADS131_REG_CH2_CFG   0x07
+#define ADS131_REG_CH3_CFG   0x08
+
+
 static const char *TAG = "ADS131";
+
+
+static esp_err_t spi_xfer(ads131_t *dev, const uint8_t *tx, uint8_t *rx, size_t len);
+static esp_err_t ads131_write_reg(ads131_t *dev, uint8_t reg, uint16_t value);
+
+static esp_err_t ads131_write_reg(ads131_t *dev, uint8_t reg, uint16_t value)
+{
+    uint8_t tx[4] = {
+        0x40 | (reg & 0x1F), // WREG
+        0x00,               // write 1 register
+        value >> 8,
+        value & 0xFF
+    };
+    return spi_xfer(dev, tx, NULL, 4);
+}
+
+
+esp_err_t ads131_set_gain_1_all(ads131_t *dev)
+{
+    uint16_t cfg = 0x0000; // PGA_GAIN = 000 → Gain = 1
+
+    ads131_command(dev, 0x11); // SDATAC
+    vTaskDelay(pdMS_TO_TICKS(2));
+
+    ads131_write_reg(dev, ADS131_REG_CH0_CFG, cfg);
+    ads131_write_reg(dev, ADS131_REG_CH1_CFG, cfg);
+    ads131_write_reg(dev, ADS131_REG_CH2_CFG, cfg);
+    ads131_write_reg(dev, ADS131_REG_CH3_CFG, cfg);
+
+    ads131_command(dev, 0x10); // RDATAC
+    vTaskDelay(pdMS_TO_TICKS(2));
+
+    return ESP_OK;
+}
+
+
 
 static void IRAM_ATTR drdy_isr(void *arg)
 {
@@ -92,6 +135,9 @@ esp_err_t ads131_init(
     ads131_command(dev, 0x11); // SDATAC
     vTaskDelay(pdMS_TO_TICKS(2));
     ads131_command(dev, 0x10); // RDATAC
+
+
+    ads131_set_gain_1_all(dev);
 
     ESP_LOGI(TAG, "Initialized");
     return ESP_OK;
