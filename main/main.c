@@ -97,25 +97,44 @@ void reader_task(void *arg)
 
     ESP_LOGI(TAG, "ADS131 sampling started");
 
+    // reader_task
     while (1) {
         if (ads131_wait_drdy(&adc_dev, portMAX_DELAY)) {
-
             if (ads131_read_frame(&adc_dev, &frame) == ESP_OK) {
 
-                if (!buffer_full) {
-                    sample_buf[write_idx].ch1 = frame.ch[1];
-                    sample_buf[write_idx].ch2 = frame.ch[2];
+                sample_buf[write_idx].ch1 = frame.ch[1];
+                sample_buf[write_idx].ch2 = frame.ch[2];
 
-                    write_idx++;
-
-                    if (write_idx >= BUF_SIZE) {
-                        buffer_full = true;
-                        ESP_LOGI(TAG, "Buffer full (%d samples)", BUF_SIZE);
-                    }
+                write_idx++;
+                if (write_idx >= BUF_SIZE) {
+                    write_idx = 0;        // حلقه
+                    buffer_full = true;   // اعلام پر بودن بافر
                 }
             }
         }
     }
+
+
+
+    // while (1) {
+    //     if (ads131_wait_drdy(&adc_dev, portMAX_DELAY)) {
+
+    //         if (ads131_read_frame(&adc_dev, &frame) == ESP_OK) {
+
+    //             if (!buffer_full) {
+    //                 sample_buf[write_idx].ch1 = frame.ch[1];
+    //                 sample_buf[write_idx].ch2 = frame.ch[2];
+
+    //                 write_idx++;
+
+    //                 if (write_idx >= BUF_SIZE) {
+    //                     buffer_full = true;
+    //                     ESP_LOGI(TAG, "Buffer full (%d samples)", BUF_SIZE);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 /* ================== process task (تبدیل + ارسال) ================== */
