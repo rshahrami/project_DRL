@@ -3,14 +3,16 @@
 
 #include <stdbool.h>
 
+/* ساختار ردیاب قله 50Hz */
 typedef struct {
-    float prev;
-    float max_val;
-    bool increasing;
-    bool started;
+    float max_val;        // ماکس سیکل جاری
+    float last_peak;      // آخرین peak معتبر 50Hz
+    float prev;           // نمونه قبلی
+    bool  first;          // برای اولین نمونه
 } PeakTracker;
 
+/* API */
 void initPeakTracker(PeakTracker* tracker);
-float updatePeak(PeakTracker* tracker, float signal);
+float updatePeak50Hz(PeakTracker* tracker, float signal);
 
 #endif // MAX_VALUE_H
