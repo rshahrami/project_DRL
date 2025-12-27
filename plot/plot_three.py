@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 PORT = 'COM3'
 BAUD = 921600
-NUM_SAMPLES = 1000
+NUM_SAMPLES = 10000
 
 com = []
 diff = []

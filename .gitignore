@@ -5,3 +5,8 @@ build/
 putty.exe
 putty.log
 *64bit_putty.exe
+
+plot/*
+!plot/plot_one.py
+!plot/plot_two.py
+!plot/plot_three.py

@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -11,6 +12,8 @@
 
 #include "ads131.h"
 #include "max_value.h"
+#include "iq_subtract_com.h"
+#include "iq_subtract_nco.h"
 
 
 /* ================== تنظیمات ================== */
@@ -20,8 +23,14 @@
 #define SPI_FREQ_HZ       2000000
 #define RMT_TX_GPIO       17
 
-#define BUF_SIZE          1000   // ~2.1 ثانیه @ 7812 SPS
+#define BUF_SIZE          25000   // ~2.1 ثانیه @ 7812 SPS
 
+
+#define LPF_ALPHA 0.05f
+
+IQTracker tracker;
+// static float com_filtered = 0.0f;
+// static float diff_filtered = 0.0f;
 
 static PeakTracker peak_ch1;
 static PeakTracker peak_ch2;
@@ -102,13 +111,20 @@ void reader_task(void *arg)
         if (ads131_wait_drdy(&adc_dev, portMAX_DELAY)) {
             if (ads131_read_frame(&adc_dev, &frame) == ESP_OK) {
 
+                // اگر buffer پر بود، صبر کن
+                if (buffer_full) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                    continue;
+                }
+
                 sample_buf[write_idx].ch1 = frame.ch[1];
                 sample_buf[write_idx].ch2 = frame.ch[2];
 
                 write_idx++;
+
+                // اگر بافر پر شد، علامت بده
                 if (write_idx >= BUF_SIZE) {
-                    write_idx = 0;        // حلقه
-                    buffer_full = true;   // اعلام پر بودن بافر
+                    buffer_full = true;
                 }
             }
         }
@@ -138,9 +154,14 @@ void reader_task(void *arg)
 }
 
 /* ================== process task (تبدیل + ارسال) ================== */
+// void setup() {
+//     init_iqtracker(&tracker, 0.05f); // مقدار LPF α≈0.05
+// }
+
 
 void process_task(void *arg)
 {
+    init_iqtracker(&tracker, 0.05f);
     while (1) {
 
         /* صبر کن تا کل دیتاست جمع شود */
@@ -159,19 +180,31 @@ void process_task(void *arg)
             float com = ads131_convert_to_volt(sample_buf[i].ch1);
             float diff = ads131_convert_to_volt(sample_buf[i].ch2);
 
+            /////////////////////////////////// filter 50 Hz on com //////////////////////////////////
+            // com_filtered = LPF_ALPHA*com + (1-LPF_ALPHA)*com_filtered;
+            // diff_filtered = LPF_ALPHA*diff + (1-LPF_ALPHA)*diff_filtered;
+            /////////////////////////////////////////////////////////////////////////////////////////
+         
 
-            float max_com = updatePeak50Hz(&peak_ch1, com);
-            float max_diff = updatePeak50Hz(&peak_ch2, diff);
+            // float max_com = updatePeak50Hz(&peak_ch1, com);
+            // float max_diff = updatePeak50Hz(&peak_ch2, diff);
 
-            float com_amp = (max_diff/max_com) * com;
+            // float scale = (max_com > 1e-6f) ? (max_diff / max_com) : 1.0f;
+            // float com_amp = scale * com;
+
+            // float com_amp = (max_diff/max_com) * com;
+
+
+            float diff_clean = iq_subtract_com(&tracker, com, diff);
 
             // printf("%.4f,%.4f\n", v1, v2);
-            printf("%.4f,%.4f\n", com_amp, diff);
+            // printf("%.2f,%.2f\n", max_com, max_diff);
+            printf("%.2f,%.2f\n", com, diff_clean);
         }
 
         /* ریست برای برداشت بعدی */
-        write_idx   = 0;
         buffer_full = false;
+        write_idx = 0;
 
         ESP_LOGI(TAG, "Transmission done");
     }
