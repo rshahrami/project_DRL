@@ -16,6 +16,8 @@
 
 #include "anc_nlms.h"
 
+#include "anc_fir_nlms.h"
+
 /* ================== تنظیمات ================== */
 
 #define TAG                 "ADS131_APP"
@@ -39,7 +41,8 @@
 
 // static Cancel50 c50;
 
-static anc2_t anc;
+// static anc2_t anc;
+static anc_fir_t anc;
 
 
 static PeakTracker peak_ch1;
@@ -149,42 +152,70 @@ void reader_task(void *arg)
 }
 
 /* ================== process task (تبدیل + ارسال) ================== */
+// void process_task(void *arg)
+// {
+//     const float fs = 4000.0f;
+//     anc2_init(&anc, fs, 50.0f, 0.002f);
+
+//     while (1) {
+//         if (!buffer_full) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+
+//         uint32_t warmup = (uint32_t)(0.5f * fs); // 0.5s
+
+//         for (uint32_t i = 0; i < BUF_SIZE; i++) {
+//             float com  = ads131_convert_to_mV(sample_buf[i].ch1);
+//             float diff = ads131_convert_to_mV(sample_buf[i].ch2);
+
+//             float clean = anc2_process(&anc, com, diff);
+
+//             if (i == warmup) {
+//                 // اگر می‌خوای بعد از قفل شدن وزن‌ها ثابت بمانند:
+//                 // anc.adapt = 0;
+//             }
+
+//             if (i >= warmup) {
+//                 printf("%.4f,%.4f\n", com, clean);
+//             }
+//         }
+
+//         buffer_full = false;
+//         write_idx = 0;
+//     }
+// }
 
 void process_task(void *arg)
 {
-    // init_iqtracker(&tracker, LPF_ALPHA);
-    // cancel50_init(&c50, /* fs واقعی */ 4000.0f);
-    anc2_init(&anc, 0.002f);   // شروع پیشنهادی
+    const float fs = 4000.0f;
+    (void)fs;
 
+    // 32 tap با fs=4000 یعنی پنجره‌ی زمانی 8ms
+    // برای 50Hz (دوره 20ms) این برای مدل‌کردن فاز/تاخیر خیلی خوبه
+    anc_fir_init(&anc, 32, 0.003f);  // mu را بعداً ریزتنظیم می‌کنیم
 
     while (1) {
+        if (!buffer_full) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
 
-        if (!buffer_full) {
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-
-        ESP_LOGI(TAG, "Sending data...");
-
-        initPeakTracker(&peak_ch1);
-        initPeakTracker(&peak_ch2);
+        uint32_t warmup = (uint32_t)(0.5f * 4000.0f); // نیم ثانیه
 
         for (uint32_t i = 0; i < BUF_SIZE; i++) {
-            float com_mV  = ads131_convert_to_mV(sample_buf[i].ch1);
-            float diff_mV = ads131_convert_to_mV(sample_buf[i].ch2);
+            float com  = ads131_convert_to_mV(sample_buf[i].ch1);
+            float diff = ads131_convert_to_mV(sample_buf[i].ch2);
 
-            float diff_clean = anc2_process(&anc, com_mV, diff_mV);
-            printf("%.4f,%.4f\n", com_mV, diff_clean);
+            float clean = anc_fir_process(&anc, com, diff);
 
+            // بعد از همگرایی می‌تونی فریز کنی
+            // اگر دیدی سیگنال‌های 1mV خورده می‌شن:
+            if (i == warmup) {
+                // anc.adapt = 0;   // فعلاً پیشنهاد نمی‌کنم فریز کنی، اول ببین چقدر کم می‌کنه
+            }
 
-            // دقت چاپ را بالاتر ببر تا 1mV گم نشود
-            // printf("%.4f,%.4f\n", com_mV, diff_mV);
+            if (i >= warmup) {
+                printf("%.4f,%.4f\n", 0.0000, clean);
+            }
         }
 
         buffer_full = false;
         write_idx = 0;
-
-        ESP_LOGI(TAG, "Transmission done");
     }
 }
 
