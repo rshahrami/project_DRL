@@ -14,9 +14,13 @@
 #include "iq_subtract_com.h"
 #include "iq_subtract_nco.h"
 
-#include "anc_nlms.h"
+// #include "anc_nlms.h"
 
-#include "anc_fir_nlms.h"
+// #include "anc_fir_nlms.h"
+#include "lpf_biquad.h"
+
+
+#include "anc_iq_biquad.h"
 
 /* ================== تنظیمات ================== */
 
@@ -42,11 +46,13 @@
 // static Cancel50 c50;
 
 // static anc2_t anc;
-static anc_fir_t anc;
+// static anc_fir_t anc;
+static anc_iq_t anc;  
+static lpf4_t lpf_clean;
 
 
-static PeakTracker peak_ch1;
-static PeakTracker peak_ch2;
+// static PeakTracker peak_ch1;
+// static PeakTracker peak_ch2;
 
 /* ================== نوع داده ================== */
 
@@ -183,34 +189,28 @@ void reader_task(void *arg)
 //     }
 // }
 
+
 void process_task(void *arg)
 {
     const float fs = 4000.0f;
-    (void)fs;
-
-    // 32 tap با fs=4000 یعنی پنجره‌ی زمانی 8ms
-    // برای 50Hz (دوره 20ms) این برای مدل‌کردن فاز/تاخیر خیلی خوبه
-    anc_fir_init(&anc, 32, 0.003f);  // mu را بعداً ریزتنظیم می‌کنیم
-
+    
+    anc_iq_init(&anc, fs);
+    lpf4_init(&lpf_clean, fs, 5.0f);
+    
     while (1) {
         if (!buffer_full) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
 
-        uint32_t warmup = (uint32_t)(0.5f * 4000.0f); // نیم ثانیه
+        uint32_t warmup = (uint32_t)(0.5f * fs);
 
         for (uint32_t i = 0; i < BUF_SIZE; i++) {
             float com  = ads131_convert_to_mV(sample_buf[i].ch1);
             float diff = ads131_convert_to_mV(sample_buf[i].ch2);
 
-            float clean = anc_fir_process(&anc, com, diff);
-
-            // بعد از همگرایی می‌تونی فریز کنی
-            // اگر دیدی سیگنال‌های 1mV خورده می‌شن:
-            if (i == warmup) {
-                // anc.adapt = 0;   // فعلاً پیشنهاد نمی‌کنم فریز کنی، اول ببین چقدر کم می‌کنه
-            }
+            float clean = anc_iq_process(&anc, com, diff);
+            float clean_lp = lpf4_process(&lpf_clean, clean);
 
             if (i >= warmup) {
-                printf("%.4f,%.4f\n", 0.0000, clean);
+                printf("%.4f,%.4f,%.4f\n", com, diff, clean_lp);
             }
         }
 
@@ -218,6 +218,9 @@ void process_task(void *arg)
         write_idx = 0;
     }
 }
+
+
+
 
 static void set_uart_baud(void)
 {
