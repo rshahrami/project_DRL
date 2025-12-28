@@ -2,9 +2,6 @@
 .plotENV
 .vscode
 build/
-putty.exe
-putty.log
-*64bit_putty.exe
 
 plot/*
 !plot/plot_one.py

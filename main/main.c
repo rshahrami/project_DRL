@@ -14,6 +14,8 @@
 #include "iq_subtract_com.h"
 #include "iq_subtract_nco.h"
 
+#include "anc_nlms.h"
+
 /* ================== تنظیمات ================== */
 
 #define TAG                 "ADS131_APP"
@@ -36,6 +38,9 @@
 #define LPF_ALPHA           0.005f     // 0.05 خیلی تند بود؛ این ملایم‌تره
 
 // static Cancel50 c50;
+
+static anc2_t anc;
+
 
 static PeakTracker peak_ch1;
 static PeakTracker peak_ch2;
@@ -149,6 +154,8 @@ void process_task(void *arg)
 {
     // init_iqtracker(&tracker, LPF_ALPHA);
     // cancel50_init(&c50, /* fs واقعی */ 4000.0f);
+    anc2_init(&anc, 0.002f);   // شروع پیشنهادی
+
 
     while (1) {
 
@@ -166,10 +173,12 @@ void process_task(void *arg)
             float com_mV  = ads131_convert_to_mV(sample_buf[i].ch1);
             float diff_mV = ads131_convert_to_mV(sample_buf[i].ch2);
 
-            // float diff_clean = cancel50_process(&c50, com_mV, diff_mV);
+            float diff_clean = anc2_process(&anc, com_mV, diff_mV);
+            printf("%.4f,%.4f\n", com_mV, diff_clean);
+
 
             // دقت چاپ را بالاتر ببر تا 1mV گم نشود
-            printf("%.4f,%.4f\n", com_mV, diff_mV);
+            // printf("%.4f,%.4f\n", com_mV, diff_mV);
         }
 
         buffer_full = false;
