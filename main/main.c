@@ -39,7 +39,7 @@
 #define TARGET_SPS          4000
 
 /* ~2 ثانیه دیتـا */
-#define BUF_SIZE            (TARGET_SPS * 2)
+#define BUF_SIZE            (TARGET_SPS * 5)
 
 #define LPF_ALPHA           0.005f     // 0.05 خیلی تند بود؛ این ملایم‌تره
 
