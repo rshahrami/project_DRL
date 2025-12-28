@@ -20,10 +20,12 @@ typedef struct {
 } ads131_frame_t;
 
 typedef enum {
-    ADS131_RATE_976SPS,
-    ADS131_RATE_3906SPS,
-    ADS131_RATE_7812SPS,
+    ADS131_RATE_500SPS = 0,
+    ADS131_RATE_1KSPS,
+    ADS131_RATE_2KSPS,
+    ADS131_RATE_4KSPS,
 } ads131_data_rate_t;
+
 
 esp_err_t ads131_init(
     ads131_t *dev,

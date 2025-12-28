@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -8,32 +7,39 @@
 
 #include "esp_log.h"
 #include "driver/uart.h"
-#include "driver/rmt.h"
+#include "driver/ledc.h"
 
 #include "ads131.h"
 #include "max_value.h"
 #include "iq_subtract_com.h"
 #include "iq_subtract_nco.h"
 
-
 /* ================== تنظیمات ================== */
 
-#define TAG               "ADS131_APP"
+#define TAG                 "ADS131_APP"
 
-#define SPI_FREQ_HZ       2000000
-#define RMT_TX_GPIO       17
+/* ---- ADC CLKIN (از ESP32-S3) ---- */
+#define ADC_CLKIN_GPIO   17
+#define ADC_CLKIN_HZ     2048000   // پیشنهاد: 2.048MHz (پایدارتر از 4.096 روی LEDC)
 
-#define BUF_SIZE          25000   // ~2.1 ثانیه @ 7812 SPS
+/* ---- SPI فقط برای خواندن فریم ---- */
+#define SPI_FREQ_HZ         8000000    // 8 MHz (امن و سریع برای 4kSPS)
 
+/* ---- نرخ نمونه برداری هدف ----
+   با CLKIN=4.096MHz و OSR=512 => 4000 SPS
+*/
+#define TARGET_SPS          4000
 
-#define LPF_ALPHA 0.05f
+/* ~2 ثانیه دیتـا */
+#define BUF_SIZE            (TARGET_SPS * 2)
 
-IQTracker tracker;
-// static float com_filtered = 0.0f;
-// static float diff_filtered = 0.0f;
+#define LPF_ALPHA           0.005f     // 0.05 خیلی تند بود؛ این ملایم‌تره
+
+// static Cancel50 c50;
 
 static PeakTracker peak_ch1;
 static PeakTracker peak_ch2;
+
 /* ================== نوع داده ================== */
 
 typedef struct {
@@ -47,45 +53,38 @@ static adc_raw_sample_t sample_buf[BUF_SIZE];
 static volatile uint32_t write_idx   = 0;
 static volatile bool buffer_full     = false;
 
-/* ================== تبدیل ADC به ولت ================== */
-// Gain = 1
-// Vref = 1.2V
-// Full-scale = ±1.2V
-float ads131_convert_to_volt(int32_t code)
+/* ================== تبدیل ADC به mV ==================
+   Gain=1, Vref=1.2V, Full-scale=±1.2V
+*/
+static inline float ads131_convert_to_mV(int32_t code)
 {
-    return ((float)code / 8388607.0f) * 1200.0f;
+    return ((float)code / 8388607.0f) * 1200.0f; // mV
 }
 
-/* ================== RMT task (کم‌اهمیت) ================== */
+/* ================== تولید CLKIN با LEDC ================== */
 
-void rmt_task(void *arg)
+static void ads131_start_clkin(void)
 {
-    rmt_config_t config = {
-        .rmt_mode = RMT_MODE_TX,
-        .channel = RMT_CHANNEL_0,
-        .gpio_num = RMT_TX_GPIO,
-        .clk_div = 10,
-        .mem_block_num = 1,
-        .tx_config.loop_en = true,
-        .tx_config.carrier_en = false,
-        .tx_config.idle_output_en = true,
-        .tx_config.idle_level = RMT_IDLE_LEVEL_LOW
+    ledc_timer_config_t timer = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,   // <-- S3
+        .timer_num        = LEDC_TIMER_0,
+        .duty_resolution  = LEDC_TIMER_1_BIT,      // برای فرکانس بالا
+        .freq_hz          = ADC_CLKIN_HZ,
+        .clk_cfg          = LEDC_AUTO_CLK
     };
+    ESP_ERROR_CHECK(ledc_timer_config(&timer));
 
-    ESP_ERROR_CHECK(rmt_config(&config));
-    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
-
-    rmt_item32_t item = {
-        .level0 = 1,
-        .duration0 = 2,
-        .level1 = 0,
-        .duration1 = 2
+    ledc_channel_config_t ch = {
+        .gpio_num   = ADC_CLKIN_GPIO,
+        .speed_mode = LEDC_LOW_SPEED_MODE,         // <-- S3
+        .channel    = LEDC_CHANNEL_0,
+        .timer_sel  = LEDC_TIMER_0,
+        .duty       = 1,                           // 50% در 1-bit
+        .hpoint     = 0
     };
+    ESP_ERROR_CHECK(ledc_channel_config(&ch));
 
-    while (1) {
-        rmt_write_items(config.channel, &item, 1, true);
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    ESP_LOGI(TAG, "CLKIN started on GPIO%d @ %d Hz (LEDC low-speed)", ADC_CLKIN_GPIO, ADC_CLKIN_HZ);
 }
 
 /* ================== reader task (حیاتی) ================== */
@@ -97,22 +96,36 @@ void reader_task(void *arg)
 
     ads131_init(&adc_dev,
                 SPI2_HOST,
-                15, 16, 14,
-                GPIO_NUM_12, GPIO_NUM_13, GPIO_NUM_11,
+                15, 16, 14,                 // MISO, MOSI, SCLK (SPI)
+                GPIO_NUM_12, GPIO_NUM_13, GPIO_NUM_11,   // CS, DRDY, RESET
                 SPI_FREQ_HZ);
 
     ads131_set_gain_1_all(&adc_dev);
-    ads131_set_data_rate(&adc_dev, ADS131_RATE_7812SPS);
 
-    ESP_LOGI(TAG, "ADS131 sampling started");
+    // این باید در درایور، CLOCK reg را درست تنظیم کند (OSR/PWR)
+    // اینجا ما هدفمان 4kSPS است
+    ads131_set_data_rate(&adc_dev, ADS131_RATE_4KSPS);
 
-    // reader_task
+    ESP_LOGI(TAG, "ADS131 sampling started (target %d SPS)", TARGET_SPS);
+
+    // برای sanity-check می‌توانی تعداد DRDY در ثانیه را بشمری
+    uint32_t drdy_count = 0;
+    TickType_t t0 = xTaskGetTickCount();
+
     while (1) {
         if (ads131_wait_drdy(&adc_dev, portMAX_DELAY)) {
+            drdy_count++;
+
+            if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(1000)) {
+                ESP_LOGI(TAG, "DRDY/s = %u", (unsigned)drdy_count);
+                drdy_count = 0;
+                t0 = xTaskGetTickCount();
+            }
+
             if (ads131_read_frame(&adc_dev, &frame) == ESP_OK) {
 
-                // اگر buffer پر بود، صبر کن
                 if (buffer_full) {
+                    // اگر بافر پره، reader باید خیلی کوتاه عقب بکشه
                     vTaskDelay(pdMS_TO_TICKS(1));
                     continue;
                 }
@@ -122,49 +135,23 @@ void reader_task(void *arg)
 
                 write_idx++;
 
-                // اگر بافر پر شد، علامت بده
                 if (write_idx >= BUF_SIZE) {
                     buffer_full = true;
                 }
             }
         }
     }
-
-
-
-    // while (1) {
-    //     if (ads131_wait_drdy(&adc_dev, portMAX_DELAY)) {
-
-    //         if (ads131_read_frame(&adc_dev, &frame) == ESP_OK) {
-
-    //             if (!buffer_full) {
-    //                 sample_buf[write_idx].ch1 = frame.ch[1];
-    //                 sample_buf[write_idx].ch2 = frame.ch[2];
-
-    //                 write_idx++;
-
-    //                 if (write_idx >= BUF_SIZE) {
-    //                     buffer_full = true;
-    //                     ESP_LOGI(TAG, "Buffer full (%d samples)", BUF_SIZE);
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 /* ================== process task (تبدیل + ارسال) ================== */
-// void setup() {
-//     init_iqtracker(&tracker, 0.05f); // مقدار LPF α≈0.05
-// }
-
 
 void process_task(void *arg)
 {
-    init_iqtracker(&tracker, 0.05f);
+    // init_iqtracker(&tracker, LPF_ALPHA);
+    // cancel50_init(&c50, /* fs واقعی */ 4000.0f);
+
     while (1) {
 
-        /* صبر کن تا کل دیتاست جمع شود */
         if (!buffer_full) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
@@ -175,34 +162,16 @@ void process_task(void *arg)
         initPeakTracker(&peak_ch1);
         initPeakTracker(&peak_ch2);
 
-
         for (uint32_t i = 0; i < BUF_SIZE; i++) {
-            float com = ads131_convert_to_volt(sample_buf[i].ch1);
-            float diff = ads131_convert_to_volt(sample_buf[i].ch2);
+            float com_mV  = ads131_convert_to_mV(sample_buf[i].ch1);
+            float diff_mV = ads131_convert_to_mV(sample_buf[i].ch2);
 
-            /////////////////////////////////// filter 50 Hz on com //////////////////////////////////
-            // com_filtered = LPF_ALPHA*com + (1-LPF_ALPHA)*com_filtered;
-            // diff_filtered = LPF_ALPHA*diff + (1-LPF_ALPHA)*diff_filtered;
-            /////////////////////////////////////////////////////////////////////////////////////////
-         
+            // float diff_clean = cancel50_process(&c50, com_mV, diff_mV);
 
-            // float max_com = updatePeak50Hz(&peak_ch1, com);
-            // float max_diff = updatePeak50Hz(&peak_ch2, diff);
-
-            // float scale = (max_com > 1e-6f) ? (max_diff / max_com) : 1.0f;
-            // float com_amp = scale * com;
-
-            // float com_amp = (max_diff/max_com) * com;
-
-
-            float diff_clean = iq_subtract_com(&tracker, com, diff);
-
-            // printf("%.4f,%.4f\n", v1, v2);
-            // printf("%.2f,%.2f\n", max_com, max_diff);
-            printf("%.2f,%.2f\n", com, diff_clean);
+            // دقت چاپ را بالاتر ببر تا 1mV گم نشود
+            printf("%.4f,%.4f\n", com_mV, diff_mV);
         }
 
-        /* ریست برای برداشت بعدی */
         buffer_full = false;
         write_idx = 0;
 
@@ -210,28 +179,23 @@ void process_task(void *arg)
     }
 }
 
-void set_uart_baud(void) {
+static void set_uart_baud(void)
+{
     uart_set_baudrate(UART_NUM_0, 921600);
 }
-
 
 /* ================== main ================== */
 
 void app_main(void)
 {
-    /* اولویت‌ها:
-       reader  = 8  (ADC real-time)
-       process = 4
-       rmt     = 2
-    */
     set_uart_baud();
 
-    // initPeakTracker(&peak_ch1);
-    // initPeakTracker(&peak_ch2);
+    // 1) اول CLKIN را راه بینداز (GPIO17)
+    ads131_start_clkin();
 
+    // 2) بعد تسک‌ها
     xTaskCreate(reader_task,  "reader_task",  4096, NULL, 8, NULL);
     xTaskCreate(process_task, "process_task", 4096, NULL, 4, NULL);
-    xTaskCreate(rmt_task,     "rmt_task",     2048, NULL, 2, NULL);
 
     ESP_LOGI(TAG, "System started");
 }
