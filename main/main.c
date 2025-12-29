@@ -193,6 +193,7 @@ void reader_task(void *arg)
 void process_task(void *arg)
 {
     const float fs = 4000.0f;
+    static uint32_t n = 0;
     
     anc_iq_init(&anc, fs);
     lpf4_init(&lpf_clean, fs, 5.0f);
@@ -210,7 +211,8 @@ void process_task(void *arg)
             float clean_lp = lpf4_process(&lpf_clean, clean);
 
             if (i >= warmup) {
-                printf("%.4f,%.4f,%.4f\n", com, diff, clean_lp);
+                // printf("%.4f,%.4f,%.4f\n", com, diff, clean_lp);
+                printf("%lu,%.4f,%.4f,%.4f\n", (unsigned long)n++, com, diff, clean_lp);
             }
         }
 
