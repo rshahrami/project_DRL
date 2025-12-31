@@ -12,3 +12,5 @@ source .plotENV/bin/activate
 pip install -r requirements.txt
 ```
 
+# Characteristics of this branch
+## Adaptive Noise Cancelling با مرجع هم‌بسته (Reference-based ANC)
