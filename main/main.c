@@ -156,6 +156,14 @@ void process_task(void *arg)
     static uint32_t n = 0;
     
     anc_iq_init(&anc, fs);
+
+    anc.w_max    = 3.0f;     // محافظه‌کارتر
+    anc.com_lim  = 500.0f;   // اگر com چندصد میلی‌ولت است
+    anc.diff_sat = 1100.0f;  // نزدیک فول‌اسکیل ADC
+    anc.com_sat  = 1100.0f;
+    anc.leak     = 0.0010f;  // کمی سریع‌تر برگردد
+    anc.mu       = 0.03f;    // اگر پمپ می‌زند کمتر کن
+
     lpf4_init(&lpf_clean, fs, 120.0f);
 
     
@@ -168,7 +176,7 @@ void process_task(void *arg)
             float com  = ads131_convert_to_mV(sample_buf[i].ch1);
             float diff = ads131_convert_to_mV(sample_buf[i].ch2);
 
-            float clean = anc_iq_process(&anc, com, diff);
+            float clean = anc_iq_process(&anc, com, diff);or 
             float clean_lp = lpf4_process(&lpf_clean, clean);
 
             if (i >= warmup) {

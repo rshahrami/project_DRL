@@ -52,7 +52,28 @@ typedef struct {
 
     biquad_t bpf_com;
     biquad_t bpf_diff;
+
+    float w_max;      // clamp for adaptive weights
+    float com_lim;    // limiter for com50 and Q reference (same units as com)
+    float diff_sat;   // if |diff| exceeds this, freeze adaptation (likely clipping)
+    float com_sat;    // if |com| exceeds this, freeze adaptation (likely clipping)
+    float leak;       // small leakage to slowly relax weights when conditions change
+
 } anc_iq_t;
+
+
+static inline float clampf(float x, float lo, float hi)
+{
+    return (x < lo) ? lo : (x > hi) ? hi : x;
+}
+
+// soft limiter: linear near 0, saturates smoothly
+static inline float soft_limit(float x, float lim)
+{
+    if (lim <= 0.0f) return x;
+    return lim * tanhf(x / lim);
+}
+
 
 static inline void anc_iq_init(anc_iq_t *s, float fs)
 {
@@ -67,6 +88,14 @@ static inline void anc_iq_init(anc_iq_t *s, float fs)
     s->f_est = 50.0f;   // شروع
     s->scount = 0;
     s->last_sign = 0;
+
+    //////////////////////////////////////////////////////////////////////
+    s->w_max    = 4.0f;     // وزن‌ها معمولاً حوالی 1 هستند؛ 4 حاشیه خوبه
+    s->com_lim  = 800.0f;   // mV: مرجع رو سالم نگه می‌داریم
+    s->diff_sat = 1100.0f;  // mV: نزدیک ±1200mV فول‌اسکیل -> احتمال کلیپ
+    s->com_sat  = 1100.0f;  // mV: همین منطق برای کانال مرجع
+    s->leak     = 0.0005f;  // نشتی آهسته برای برگشت وزن‌ها
+    ///////////////////////////////////////////////////////////////////////
 
     // Q را کمتر می‌کنیم تا drift فرکانس کمتر اذیت کند
     biquad_init_bandpass(&s->bpf_com,  fs, 50.0f, 10.0f);
@@ -96,46 +125,62 @@ static inline float frac_delay_read(const float *buf, int len, int write_idx, fl
 
 static inline float anc_iq_process(anc_iq_t *s, float com, float diff)
 {
+    // اگر نزدیک فول‌اسکیل باشیم، احتمال کلیپ/دیستورشن هست => تطبیق رو فریز کن
+    bool freeze = (fabsf(diff) >= s->diff_sat) || (fabsf(com) >= s->com_sat);
+
     // 1) فقط مولفه‌ی 50Hz را جدا کن
     float com50  = biquad_process(&s->bpf_com,  com);
     float diff50 = biquad_process(&s->bpf_diff, diff);
 
-    // 2) فرکانس را خیلی سبک از zero-crossing روی com50 دنبال کن (slow drift)
+    // 2) محدودسازی نرم مرجع (و اختیاری diff50 برای پایداری)
+    com50  = soft_limit(com50,  s->com_lim);
+    diff50 = soft_limit(diff50, s->com_lim);
+
+    // 3) دنبال‌کردن خیلی سبک فرکانس با zero-crossing روی com50
     int sign = (com50 >= 0.0f) ? 1 : -1;
     s->scount++;
 
-    // positive-going crossing: (-) -> (+)
     if (s->last_sign < 0 && sign > 0) {
         if (s->scount > 5) {
             float f_meas = s->fs / (float)s->scount;
-            // LPF روی تخمین فرکانس
             s->f_est = 0.98f*s->f_est + 0.02f*f_meas;
         }
         s->scount = 0;
     }
     s->last_sign = sign;
 
-    // 3) ساخت Q با تاخیر یک‌چهارم پریود، ولی اعشاری و adaptive:
-    // D = fs/(4*f_est)
-    float D = s->fs / (4.0f * s->f_est);   // حدود 20 ولی کمی تغییر می‌کند
+    // 4) ساخت Q با تاخیر یک‌چهارم پریود (fractional delay)
+    float D = s->fs / (4.0f * s->f_est);
 
-    // write current sample
     s->dly[s->di] = com50;
-
-    // read delayed (fractional) sample
     float q = frac_delay_read(s->dly, 64, s->di, D);
+    q = soft_limit(q, s->com_lim);
 
     s->di++; if (s->di >= 64) s->di = 0;
 
-    // 4) پیش‌بینی 50Hz در diff و NLMS
+    // 5) leakage: اگر شرایط بد شد، آروم وزن‌ها رو به سمت صفر هل بده
+    s->a *= (1.0f - s->leak);
+    s->b *= (1.0f - s->leak);
+
+    // clamp وزن‌ها برای جلوگیری از runaway
+    s->a = clampf(s->a, -s->w_max, s->w_max);
+    s->b = clampf(s->b, -s->w_max, s->w_max);
+
+    // 6) پیش‌بینی 50Hz در diff و NLMS (اگر freeze نیست)
     float yhat50 = s->a*com50 + s->b*q;
-    float e50 = diff50 - yhat50;
+    float e50    = diff50 - yhat50;
 
     float p = com50*com50 + q*q + s->eps;
-    float g = (s->mu * e50) / p;
-    s->a += g * com50;
-    s->b += g * q;
 
-    // 5) کم کردن فقط همان مولفه از diff اصلی
+    if (!freeze) {
+        float g = (s->mu * e50) / p;
+        s->a += g * com50;
+        s->b += g * q;
+
+        s->a = clampf(s->a, -s->w_max, s->w_max);
+        s->b = clampf(s->b, -s->w_max, s->w_max);
+    }
+
+    // 7) کم کردن فقط همان مولفه از diff اصلی
     return diff - yhat50;
 }
