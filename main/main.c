@@ -10,21 +10,12 @@
 #include "driver/ledc.h"
 
 #include "ads131.h"
-#include "max_value.h"
-#include "iq_subtract_com.h"
-#include "iq_subtract_nco.h"
-
-// #include "anc_nlms.h"
-
-// #include "anc_fir_nlms.h"
 #include "lpf_biquad.h"
-
-
 #include "anc_iq_biquad.h"
 
 /* ================== تنظیمات ================== */
 
-#define TAG                 "ADS131_APP"
+#define TAG     "ADS131_APP"
 
 /* ---- ADC CLKIN (از ESP32-S3) ---- */
 #define ADC_CLKIN_GPIO   17
