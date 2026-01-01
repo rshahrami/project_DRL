@@ -6,6 +6,14 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 
+
+typedef enum {
+    ADS131_PWR_VLP = 0, // Very-low-power
+    ADS131_PWR_LP  = 1, // Low-power
+    ADS131_PWR_HR  = 2, // High-resolution (default)
+} ads131_pwr_t;
+
+
 typedef struct {
     spi_device_handle_t spi;
     gpio_num_t cs_gpio;
@@ -14,10 +22,12 @@ typedef struct {
     SemaphoreHandle_t drdy_sem;
 } ads131_t;
 
+
 typedef struct {
     int32_t status;
     int32_t ch[4];
 } ads131_frame_t;
+
 
 typedef enum {
     ADS131_RATE_500SPS = 0,

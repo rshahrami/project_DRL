@@ -7,3 +7,4 @@ plot/*
 !plot/plot_one.py
 !plot/plot_two.py
 !plot/plot_three.py
+!plot/plot.py

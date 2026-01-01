@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 PORT = 'COM3'
 BAUD = 921600
-NUM_SAMPLES = 20000
+NUM_SAMPLES = 5000
 
 # n,com,diff,clean  (n = uint32)
 pat = re.compile(

@@ -1,6 +1,8 @@
 #include "ads131.h"
 #include "esp_log.h"
 #include <string.h>
+// #include "freertos/FreeRTOS.h"
+// #include "freertos/task.h"
 
 #define ADS131_REG_ID        0x00
 #define ADS131_REG_CLOCK     0x03
@@ -22,6 +24,29 @@ static esp_err_t ads131_write_reg(ads131_t *dev, uint8_t reg, uint16_t value);
 static esp_err_t ads131_read_reg(ads131_t *dev, uint8_t reg, uint16_t *out);
 
 
+
+static inline uint16_t set_bits(uint16_t v, uint16_t mask, uint16_t val_shifted){
+    v = (v & ~mask) | (val_shifted & mask);
+    return v;
+}
+
+// esp_err_t ads131_set_clock(ads131_t *dev, uint8_t osr_code, ads131_pwr_t pwr)
+// {
+//     uint16_t clock=0;
+//     ESP_ERROR_CHECK(ads131_read_reg(dev, ADS131_REG_CLOCK, &clock));
+
+//     // OSR bits [4:2]
+//     clock = set_bits(clock, (0x7u<<2), ((uint16_t)(osr_code & 0x7u) << 2));
+
+//     // PWR bits [1:0]
+//     clock = set_bits(clock, 0x3u, (uint16_t)(pwr & 0x3u));
+
+//     // Reserved [7:6] بهتره 00 بمونه
+//     clock &= ~(0x3u<<6);
+
+//     ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CLOCK, clock));
+//     return ESP_OK;
+// }
 
 static esp_err_t ads131_xfer_frame(ads131_t *dev, const uint8_t tx[ADS131_FRAME_BYTES],
                                   uint8_t rx[ADS131_FRAME_BYTES])
@@ -111,6 +136,8 @@ esp_err_t ads131_set_gain_1_all(ads131_t *dev)
     ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CH1_CFG, cfg));
     ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CH2_CFG, cfg));
     ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CH3_CFG, cfg));
+
+    // ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CLOCK, clock));
 
     ESP_ERROR_CHECK(ads131_command(dev, 0x0010)); // RDATAC
     vTaskDelay(pdMS_TO_TICKS(2));
@@ -269,31 +296,27 @@ esp_err_t ads131_read_frame(ads131_t *dev, ads131_frame_t *frame)
 */
 esp_err_t ads131_set_data_rate(ads131_t *dev, ads131_data_rate_t rate)
 {
-    uint16_t clock = 0;
-    ESP_ERROR_CHECK(ads131_read_reg(dev, ADS131_REG_CLOCK, &clock));
+    uint8_t osr_code;
 
-    // پاک کردن OSR[2:0] (بیت‌های 4..2)
-    clock &= ~(0x7u << 2);
-
-    uint16_t osr_code = 0b011; // default = 1024
-
-    // OSR codes (از دیتاشیت):
-    // 001=256, 010=512, 011=1024, 100=2048 ...
     switch (rate) {
-        case ADS131_RATE_4KSPS:  osr_code = 0b001; break; // OSR=256 => 4kSPS @ 2.048MHz (VLP)
-        case ADS131_RATE_2KSPS:  osr_code = 0b010; break; // OSR=512
-        case ADS131_RATE_1KSPS:  osr_code = 0b011; break; // OSR=1024
-        case ADS131_RATE_500SPS: osr_code = 0b100; break; // OSR=2048
-        default: osr_code = 0b001; break;
+        case ADS131_RATE_4KSPS: osr_code = 1; break; // 256
+        case ADS131_RATE_2KSPS: osr_code = 2; break; // 512
+        case ADS131_RATE_1KSPS: osr_code = 3; break; // 1024
+        default:
+            return ESP_ERR_INVALID_ARG;
     }
 
-    clock |= (osr_code << 2);
+    uint16_t clk = 0;
 
-    ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CLOCK, clock));
+    ESP_ERROR_CHECK(ads131_command(dev, 0x0011)); // SDATAC
+    vTaskDelay(pdMS_TO_TICKS(2));
 
-    uint16_t rb = 0;
-    ESP_ERROR_CHECK(ads131_read_reg(dev, ADS131_REG_CLOCK, &rb));
-    ESP_LOGI(TAG, "CLOCK after set: 0x%04X (readback 0x%04X)", (unsigned)clock, (unsigned)rb);
+    ESP_ERROR_CHECK(ads131_read_reg(dev, ADS131_REG_CLOCK, &clk));
+    clk = (uint16_t)((clk & ~(0x7u << 2)) | ((uint16_t)osr_code << 2));
+    ESP_ERROR_CHECK(ads131_write_reg(dev, ADS131_REG_CLOCK, clk));
+
+    ESP_ERROR_CHECK(ads131_command(dev, 0x0010)); // RDATAC
+    vTaskDelay(pdMS_TO_TICKS(2));
 
     return ESP_OK;
 }

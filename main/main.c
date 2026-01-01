@@ -19,15 +19,15 @@
 
 /* ---- ADC CLKIN (از ESP32-S3) ---- */
 #define ADC_CLKIN_GPIO   17
-#define ADC_CLKIN_HZ     2048000   // پیشنهاد: 2.048MHz (پایدارتر از 4.096 روی LEDC)
-
+// #define ADC_CLKIN_HZ     2048000   // پیشنهاد: 2.048MHz (پایدارتر از 4.096 روی LEDC)
+#define ADC_CLKIN_HZ     2048000 
 /* ---- SPI فقط برای خواندن فریم ---- */
 #define SPI_FREQ_HZ         8000000    // 8 MHz (امن و سریع برای 4kSPS)
 
 /* ---- نرخ نمونه برداری هدف ----
    با CLKIN=4.096MHz و OSR=512 => 4000 SPS
 */
-#define TARGET_SPS          4000
+#define TARGET_SPS          1000
 
 /* ~2 ثانیه دیتـا */
 #define BUF_SIZE            (TARGET_SPS * 5)
@@ -109,7 +109,7 @@ void reader_task(void *arg)
 
     // این باید در درایور، CLOCK reg را درست تنظیم کند (OSR/PWR)
     // اینجا ما هدفمان 4kSPS است
-    ads131_set_data_rate(&adc_dev, ADS131_RATE_4KSPS);
+    ads131_set_data_rate(&adc_dev, ADS131_RATE_1KSPS);
 
     ESP_LOGI(TAG, "ADS131 sampling started (target %d SPS)", TARGET_SPS);
 
@@ -149,45 +149,15 @@ void reader_task(void *arg)
 }
 
 /* ================== process task (تبدیل + ارسال) ================== */
-// void process_task(void *arg)
-// {
-//     const float fs = 4000.0f;
-//     anc2_init(&anc, fs, 50.0f, 0.002f);
-
-//     while (1) {
-//         if (!buffer_full) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
-
-//         uint32_t warmup = (uint32_t)(0.5f * fs); // 0.5s
-
-//         for (uint32_t i = 0; i < BUF_SIZE; i++) {
-//             float com  = ads131_convert_to_mV(sample_buf[i].ch1);
-//             float diff = ads131_convert_to_mV(sample_buf[i].ch2);
-
-//             float clean = anc2_process(&anc, com, diff);
-
-//             if (i == warmup) {
-//                 // اگر می‌خوای بعد از قفل شدن وزن‌ها ثابت بمانند:
-//                 // anc.adapt = 0;
-//             }
-
-//             if (i >= warmup) {
-//                 printf("%.4f,%.4f\n", com, clean);
-//             }
-//         }
-
-//         buffer_full = false;
-//         write_idx = 0;
-//     }
-// }
-
 
 void process_task(void *arg)
 {
-    const float fs = 4000.0f;
+    const float fs = 1000.0f;
     static uint32_t n = 0;
     
     anc_iq_init(&anc, fs);
-    lpf4_init(&lpf_clean, fs, 5.0f);
+    lpf4_init(&lpf_clean, fs, 120.0f);
+
     
     while (1) {
         if (!buffer_full) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
@@ -224,6 +194,8 @@ static void set_uart_baud(void)
 
 void app_main(void)
 {
+    
+
     set_uart_baud();
 
     // 1) اول CLKIN را راه بینداز (GPIO17)
