@@ -12,5 +12,9 @@ source .plotENV/bin/activate
 pip install -r requirements.txt
 ```
 
-# Characteristics of this branch
-## Adaptive Noise Cancelling با مرجع هم‌بسته (Reference-based ANC)
+### 📋 Additional Details:
+| Component               | Specification                        |
+|-------------------------|--------------------------------------|
+| **ADC**                 | ADS131m04                            |
+| **Method BASE**         | ANC(Adaptive Noise Cancelling)       |
+| **Method**              | Reference-based ANC                  |

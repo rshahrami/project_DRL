@@ -176,7 +176,7 @@ void process_task(void *arg)
             float com  = ads131_convert_to_mV(sample_buf[i].ch1);
             float diff = ads131_convert_to_mV(sample_buf[i].ch2);
 
-            float clean = anc_iq_process(&anc, com, diff);or 
+            float clean = anc_iq_process(&anc, com, diff);
             float clean_lp = lpf4_process(&lpf_clean, clean);
 
             if (i >= warmup) {
