@@ -141,17 +141,19 @@ void process_task(void *arg)
     anc.leak     = 0.0010f;
     anc.mu       = 0.03f;
 
-    lpf4_init(&lpf_clean, fs, 120.0f);
+    lpf4_init(&lpf_clean, fs, 100.0f);
 
-    const uint32_t warmup = (uint32_t)(0.5f * fs);
-    const uint32_t K = 5;        // decimate
+    const uint32_t warmup_samp  = (uint32_t)(0.5f * fs);   // 0.5s
+    const uint32_t capture_samp = 3000;                    // 3s واقعی
+    const uint32_t K = 5;                                  // ✅ تا 100Hz
+
     static uint32_t n = 0;
+    bool capturing = false;
+    uint32_t cap_count = 0;       // شمارنده داخل پنجره
+    uint32_t window_id = 0;
 
     while (1) {
-        if (rb_empty()) {
-            vTaskDelay(pdMS_TO_TICKS(1));
-            continue;
-        }
+        if (rb_empty()) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
 
         adc_raw_sample_t s = rb[rb_r];
         rb_r = rb_next(rb_r);
@@ -163,12 +165,111 @@ void process_task(void *arg)
         float clean_lp = lpf4_process(&lpf_clean, clean);
 
         uint32_t cur_n = n++;
-        if (cur_n >= warmup && (cur_n % K) == 0) {
-            printf("%lu,%.3f,%.3f,%.3f\n",
-                   (unsigned long)cur_n, com, diff, clean_lp);
+
+        // warmup فقط یک بار در شروع
+        if (!capturing) {
+            if (cur_n < warmup_samp) continue;
+            capturing = true;
+            cap_count = 0;
+            window_id = 0;
+            printf("#BEGIN,%lu\n", (unsigned long)window_id);
+        }
+
+        // داخل پنجره 3 ثانیه‌ای
+        if (cap_count < capture_samp) {
+            if ((cur_n % K) == 0) {
+                printf("%lu,%.3f,%.3f,%.3f\n",
+                       (unsigned long)cur_n, com, diff, clean_lp);
+
+                // کمک به WDT و UART (خیلی مهم)
+                if ((cap_count & 0x3F) == 0) vTaskDelay(pdMS_TO_TICKS(1)); // هر 64 نمونه واقعی
+            }
+            cap_count++;
+        } else {
+            // پنجره تمام شد
+            printf("#END,%lu\n", (unsigned long)window_id);
+
+            window_id++;
+            cap_count = 0;
+
+            // یک مکث کوچک بین پنجره‌ها (هم برای WDT هم برای اینکه PC عقب‌افتادگی نگیرد)
+            vTaskDelay(pdMS_TO_TICKS(50));
+
+            // شروع پنجره بعدی
+            printf("#BEGIN,%lu\n", (unsigned long)window_id);
         }
     }
 }
+
+
+// void process_task(void *arg)
+// {
+//     const float fs = 1000.0f;
+
+//     anc_iq_init(&anc, fs);
+//     anc.w_max    = 3.0f;
+//     anc.com_lim  = 500.0f;
+//     anc.diff_sat = 1100.0f;
+//     anc.com_sat  = 1100.0f;
+//     anc.leak     = 0.0010f;
+//     anc.mu       = 0.03f;
+
+//     lpf4_init(&lpf_clean, fs, 100.0f);
+
+//     const uint32_t warmup_samp = (uint32_t)(0.5f * fs);   // 0.5s warmup
+//     const uint32_t capture_samp = 3000;                   // 3s = 3 سیکل 1Hz
+//     const uint32_t K = 5;                                // decimate (برای 1Hz عالیه)
+
+//     static uint32_t n = 0;
+//     uint32_t printed_window_done = 0;  // تعداد نمونه‌های واقعی که از شروع capture شمرده‌ایم
+//     bool capturing = false;
+
+//     while (1) {
+//         if (rb_empty()) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
+
+//         adc_raw_sample_t s = rb[rb_r];
+//         rb_r = rb_next(rb_r);
+
+//         float com  = ads131_convert_to_mV(s.ch1);
+//         float diff = ads131_convert_to_mV(s.ch2);
+
+//         float clean    = anc_iq_process(&anc, com, diff);
+//         float clean_lp = lpf4_process(&lpf_clean, clean);
+
+//         uint32_t cur_n = n++;
+
+//         // هنوز warmup تمام نشده
+//         if (!capturing) {
+//             if (cur_n >= warmup_samp) {
+//                 capturing = true;
+//                 printed_window_done = 0;
+//             } else {
+//                 continue;
+//             }
+//         }
+
+//         // توی بازه‌ی capture هستیم
+//         if (printed_window_done < capture_samp) {
+//             if ((cur_n % K) == 0) {
+//                 printf("%lu,%.3f,%.3f,%.3f\n",
+//                        (unsigned long)cur_n, com, diff, clean_lp);
+
+//                 // ✅ خیلی مهم برای جلوگیری از WDT و روان شدن UART
+//                 vTaskDelay(pdMS_TO_TICKS(1));
+//             }
+//             printed_window_done++;
+//         } else {
+//             // ✅ کار تموم: دیگه چاپ نکن
+//             ESP_LOGI(TAG, "Capture done: %lu samples (after warmup).", (unsigned long)capture_samp);
+
+//             // اگر می‌خوای کل کار همینجا متوقف شه:
+//             vTaskSuspend(NULL);
+//             // یا اگر می‌خوای فقط چاپ قطع شه ولی پردازش ادامه پیدا کنه:
+//             // vTaskDelay(pdMS_TO_TICKS(1000));
+//         }
+//     }
+// }
+
 
 /* ================== UART ================== */
 
@@ -184,8 +285,11 @@ void app_main(void)
     set_uart_baud();
     ads131_start_clkin();
 
-    xTaskCreate(reader_task,  "reader_task",  4096, NULL, 8, NULL);
-    xTaskCreate(process_task, "process_task", 4096, NULL, 4, NULL);
+    // xTaskCreate(reader_task,  "reader_task",  4096, NULL, 8, NULL);
+    // xTaskCreate(process_task, "process_task", 4096, NULL, 4, NULL);
+
+    xTaskCreatePinnedToCore(reader_task,  "reader_task",  4096, NULL, 8, NULL, 0);
+    xTaskCreatePinnedToCore(process_task, "process_task", 4096, NULL, 4, NULL, 1);
 
     ESP_LOGI(TAG, "System started");
 }
