@@ -6,6 +6,12 @@ typedef struct {
     float z1,z2;
 } lpf_biquad_t;
 
+static inline void lpf_biquad_reset(lpf_biquad_t *s)
+{
+    s->z1 = 0.0f;
+    s->z2 = 0.0f;
+}
+
 static inline float lpf_biquad_process(lpf_biquad_t *s, float x)
 {
     float y = s->b0*x + s->z1;
@@ -31,7 +37,7 @@ static inline void lpf_biquad_init_lowpass(lpf_biquad_t *s, float fs, float fc, 
 
     s->b0 = b0/a0; s->b1 = b1/a0; s->b2 = b2/a0;
     s->a1 = a1/a0; s->a2 = a2/a0;
-    s->z1 = 0.0f;  s->z2 = 0.0f;
+    lpf_biquad_reset(s);
 }
 
 // 4th-order LPF = دو تا 2nd-order پشت سر هم
@@ -44,6 +50,12 @@ static inline void lpf4_init(lpf4_t *f, float fs, float fc)
 {
     lpf_biquad_init_lowpass(&f->s1, fs, fc, 0.70710678f);
     lpf_biquad_init_lowpass(&f->s2, fs, fc, 0.70710678f);
+}
+
+static inline void lpf4_reset(lpf4_t *f)
+{
+    lpf_biquad_reset(&f->s1);
+    lpf_biquad_reset(&f->s2);
 }
 
 static inline float lpf4_process(lpf4_t *f, float x)
