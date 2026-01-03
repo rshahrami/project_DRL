@@ -16,5 +16,5 @@ pip install -r requirements.txt
 | Component               | Specification                        |
 |-------------------------|--------------------------------------|
 | **ADC**                 | ADS131m04                            |
-| **Method BASE**         | ANC(Adaptive Noise Cancelling)       |
-| **Method**              | Reference-based ANC                  |
+| **Method BASE**         | Adaptive Sinusoidal Cancellation     |
+| **Method**              | Notch Filter                         |
