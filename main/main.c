@@ -10,8 +10,10 @@
 #include "driver/ledc.h"
 
 #include "ads131.h"
+#include "notch50_iq.h"
 #include "lpf_biquad.h"
 #include "anc_iq_biquad.h"
+
 
 /* ================== تنظیمات ================== */
 
@@ -55,8 +57,10 @@ static inline bool rb_empty(void)
 
 /* ================== DSP ================== */
 
-static anc_iq_t anc;
-static lpf4_t   lpf_clean;
+static anc_iq_t  anc;
+static lpf4_t    lpf_clean;
+static Notch50IQ notch;
+
 
 /* ================== ADC → mV ================== */
 
@@ -143,6 +147,10 @@ void process_task(void *arg)
 
     lpf4_init(&lpf_clean, fs, 100.0f);
 
+    // 50Hz model-based cancellation (I/Q lock-in style)
+    notch50iq_init(&notch, fs, 50.0f, 0.005f);
+
+
     const uint32_t warmup_samp  = (uint32_t)(0.5f * fs);   // 0.5s
     const uint32_t capture_samp = 3000;                    // 3s واقعی
     const uint32_t K = 5;                                  // ✅ تا 100Hz
@@ -161,8 +169,11 @@ void process_task(void *arg)
         float com  = ads131_convert_to_mV(s.ch1);
         float diff = ads131_convert_to_mV(s.ch2);
 
-        float clean    = anc_iq_process(&anc, com, diff);
+
+        // float clean    = anc_iq_process(&anc, com, diff);
+        float clean    = notch50iq_process(&notch, com, diff);
         float clean_lp = lpf4_process(&lpf_clean, clean);
+        
 
         uint32_t cur_n = n++;
 
