@@ -11,7 +11,7 @@
 */
 
 #ifndef ANC_NTAPS
-#define ANC_NTAPS   21
+#define ANC_NTAPS   21  //21
 #endif
 
 #ifndef ANC_EPS

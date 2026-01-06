@@ -3,52 +3,54 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 
+# =========================
+# تنظیمات پورت و نرخ ارسال
+# =========================
 PORT = 'COM3'
 BAUD = 921600
 
-# --- تنظیم پنجره ---
-REAL_SAMPLES_WINDOW = 3000   # سه سیکل 1Hz در 1kSPS
+# =========================
+# تنظیمات پنجره و تحلیل
+# =========================
+REAL_SAMPLES_WINDOW = 3000   # مثلاً سه سیکل 1Hz در 1kSPS
 WARMUP_SKIP = 0             # اگر ESP خودش warmup را چاپ نمی‌کند، اینجا می‌توانی n اولیه را نادیده بگیری
 
-FS = 1000.0
+# =========================
+# نرخ نمونه‌برداری واقعی ADC (Hz)
+# (برای طراحی فیلترها لازم است)
+# =========================
+SAMPLE_RATE_HZ = 1000.0
+
+# =========================
+# تنظیمات فیلترها
+# =========================
+USE_NOTCH_50HZ = False
+NOTCH_F0_HZ = 50.0
+NOTCH_Q = 30.0           # بزرگ‌تر => ناچ باریک‌تر
+
+USE_LOWPASS = True
+LOWPASS_FC_HZ = 20.0    # فرکانس قطع (Hz)
+LOWPASS_Q = 0.70710678   # Q ~ 0.707 (Butterworth)
 
 # اگر خروجی تو float mV است:
 MODE = "float_mV"
 # اگر خروجی را به int (mV*1000) تبدیل کردی، این را بگذار:
 # MODE = "int_uV_in_mVx1000"
+...
 
-# حذف کدهای رنگ/ANSI (اگر PuTTY/monitor چیزی اضافه کند)
-ansi = re.compile(rb'\x1b\[[0-9;]*m')
-
-# الگوی داده: n,com,diff,clean
-pat_float = re.compile(
-    rb'^\s*(\d+),\s*([-+]?\d+(?:\.\d+)?),\s*([-+]?\d+(?:\.\d+)?),\s*([-+]?\d+(?:\.\d+)?)\s*$'
-)
-# الگوی داده‌ی int (mV*1000): n,com_i,diff_i,clean_i
-pat_int = re.compile(
-    rb'^\s*(\d+),\s*([-+]?\d+),\s*([-+]?\d+),\s*([-+]?\d+)\s*$'
-)
-
-# توکن‌های لاگ/خطا که باید کامل ignore شوند
-bad_tokens = (
-    b'task_wdt', b'watchdog', b'guru meditation', b'backtrace',
-    b'assert', b'abort', b'failed',
-    b'E (', b'W (', b'I (', b'D ('
-)
-
-
+# =========================
+# فیلترها (Biquad IIR)
+# =========================
 def _biquad_df2(x, b, a):
     """
     Direct Form II Transposed biquad.
     x: 1D array
     b: [b0,b1,b2]
     a: [1,a1,a2]  (a0 must be 1)
-    خروجی: y
     """
     x = np.asarray(x, dtype=float)
     y = np.empty_like(x, dtype=float)
 
-    # state
     s1 = 0.0
     s2 = 0.0
 
@@ -76,7 +78,6 @@ def notch_filter(x, fs, f0=50.0, Q=30.0):
     هرچی Q بزرگ‌تر => ناچ باریک‌تر (کمتر به اطراف آسیب می‌زنه).
     """
     x = np.asarray(x, dtype=float)
-    # جلوگیری از تنظیمات نامعتبر
     f0 = float(f0)
     fs = float(fs)
     Q = float(Q)
@@ -92,7 +93,6 @@ def notch_filter(x, fs, f0=50.0, Q=30.0):
     a1 = -2.0 * np.cos(w0)
     a2 = 1.0 - alpha
 
-    # normalize so a0=1
     b = np.array([b0, b1, b2], dtype=float) / a0
     a = np.array([1.0, a1 / a0, a2 / a0], dtype=float)
 
@@ -101,7 +101,7 @@ def notch_filter(x, fs, f0=50.0, Q=30.0):
 
 def lowpass_filter(x, fs, fc, Q=0.70710678):
     """
-    2nd-order Butterworth-ish lowpass biquad (Q پیش‌فرض ~ 0.707 = Butterworth).
+    2nd-order lowpass biquad (RBJ cookbook). Q پیش‌فرض ~ 0.707 = Butterworth.
     fc: فرکانس قطع (Hz)
     """
     x = np.asarray(x, dtype=float)
@@ -109,7 +109,6 @@ def lowpass_filter(x, fs, fc, Q=0.70710678):
     fc = float(fc)
     Q = float(Q)
 
-    # محدودیت برای جلوگیری از انفجار عددی (fc باید < Nyquist باشد)
     nyq = fs / 2.0
     if fc <= 0:
         return np.zeros_like(x)
@@ -120,7 +119,6 @@ def lowpass_filter(x, fs, fc, Q=0.70710678):
     alpha = np.sin(w0) / (2.0 * Q)
     cosw0 = np.cos(w0)
 
-    # RBJ Audio EQ Cookbook - Lowpass
     b0 = (1.0 - cosw0) / 2.0
     b1 = 1.0 - cosw0
     b2 = (1.0 - cosw0) / 2.0
@@ -135,11 +133,24 @@ def lowpass_filter(x, fs, fc, Q=0.70710678):
     return _biquad_df2(x, b, a)
 
 
+# =========================
+# Regex و پارس کردن خروجی ESP32
+# =========================
+# حالت float:  n,com,diff,clean  (مثلاً: 18670,7.259,-50.089,-1.543)
+pat_float = re.compile(rb'^\s*(\d+)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$')
 
+# حالت int: n,com_i,diff_i,clean_i (مثلاً mV*1000)
+pat_int   = re.compile(rb'^\s*(\d+)\s*,\s*([-+]?\d+)\s*,\s*([-+]?\d+)\s*,\s*([-+]?\d+)\s*$')
+
+ansi = re.compile(rb'\x1b\[[0-9;]*[A-Za-z]')
 
 def is_log_line(b: bytes) -> bool:
-    low = b.lower()
-    return any(tok in low for tok in bad_tokens)
+    # هرچی شبیه لاگ‌های ESP-IDF یا پیام‌های خطا باشد را رد کن
+    bad_prefixes = (
+        b'ESP-ROM', b'ets ', b'Guru Meditation', b'abort', b'failed',
+        b'E (', b'W (', b'I (', b'D ('
+    )
+    return any(b.startswith(p) for p in bad_prefixes)
 
 def parse_data_line(b: bytes):
     """return (n, com, diff, clean) in mV as float, or None"""
@@ -150,8 +161,6 @@ def parse_data_line(b: bytes):
         n = int(m.group(1))
         com = float(m.group(2))
         diff = float(m.group(3))
-        # com = 0
-        # diff = 0
         clean = float(m.group(4))
         return n, com, diff, clean
 
@@ -172,7 +181,10 @@ def parse_data_line(b: bytes):
     else:
         raise ValueError("Unknown MODE")
 
-# --- بافرهای داده ---
+
+# =========================
+# خواندن دیتا از سریال
+# =========================
 n_list = []
 com_list = []
 diff_list = []
@@ -224,7 +236,7 @@ with serial.Serial(PORT, BAUD, timeout=1) as ser:
         diff_list.append(diff)
         clean_list.append(clean)
 
-        # شرط پایان: پنجره‌ی 3000 نمونه‌ی واقعی
+        # شرط پایان: پنجره‌ی REAL_SAMPLES_WINDOW نمونه‌ی واقعی
         if (n - n_start) >= REAL_SAMPLES_WINDOW:
             break
 
@@ -234,20 +246,31 @@ print(f"Real samples covered:  {n_list[-1] - n_start}")
 print(f"Skipped log/error lines: {skipped_logs}")
 print(f"Skipped other malformed lines: {skipped_other}")
 
-# --- تحلیل پرش‌ها (سکته‌ها) ---
+
+# =========================
+# تبدیل به آرایه
+# =========================
 n = np.array(n_list, dtype=np.int64)
 com = np.array(com_list, dtype=float)
 diff = np.array(diff_list, dtype=float)
 clean = np.array(clean_list, dtype=float)
 
+# =========================
+# تحلیل پرش‌ها (سکته‌ها) با توجه به n
+# =========================
 dn = np.diff(n)
-
-# حدس K از شایع‌ترین dn
-vals, cnts = np.unique(dn, return_counts=True)
-k_guess = int(vals[np.argmax(cnts)]) if len(vals) else None
+if len(dn) == 0:
+    k_guess = None
+else:
+    vals, cnts = np.unique(dn, return_counts=True)
+    order = np.argsort(cnts)[::-1]
+    vals = vals[order]
+    cnts = cnts[order]
+    k_guess = int(vals[0]) if len(vals) else None
 
 print("\nStep (dn) stats:")
-print("  unique dn (first 10):", list(zip(vals[:10].tolist(), cnts[:10].tolist())))
+if len(dn):
+    print("  unique dn (first 10):", list(zip(vals[:10].tolist(), cnts[:10].tolist())))
 print("  guessed expected step:", k_guess)
 
 # سکته = dn != k_guess
@@ -260,23 +283,66 @@ print(f"\nJumps detected: {len(jump_idx)}")
 for i in jump_idx[:20]:
     print(f"  jump at idx {i}: n {n[i]} -> {n[i+1]} (dn={dn[i]})")
 
-# --- قطع کردن خطوط در نمودار با NaN تا شکل خراب نشه ---
-# هر جا jump داریم، یک NaN بعدش تزریق می‌کنیم
-for idx in jump_idx[::-1]:
-    n = np.insert(n, idx + 1, n[idx] + 1)
-    com = np.insert(com, idx + 1, np.nan)
-    diff = np.insert(diff, idx + 1, np.nan)
-    clean = np.insert(clean, idx + 1, np.nan)
 
-# --- رسم ---
-plt.figure(figsize=(12, 5))
-plt.plot(n, clean, label='CLEAN (mV)', linewidth=1)
-plt.plot(n, diff, label='DIFF (mV)', linewidth=1, alpha=0.5)
-plt.plot(n, com, label='COM (mV)', linewidth=1, alpha=0.5)
+# =========================
+# (نقطه‌ی درستِ استفاده از فیلترها)
+#   قبل از اینکه NaN تزریق کنیم،
+#   روی سیگنال‌های خام فیلتر را اعمال می‌کنیم.
+# =========================
+com_f = com.copy()
+diff_f = diff.copy()
+clean_f = clean.copy()
+
+if USE_NOTCH_50HZ:
+    com_f = notch_filter(com_f, fs=SAMPLE_RATE_HZ, f0=NOTCH_F0_HZ, Q=NOTCH_Q)
+    diff_f = notch_filter(diff_f, fs=SAMPLE_RATE_HZ, f0=NOTCH_F0_HZ, Q=NOTCH_Q)
+    clean_f = notch_filter(clean_f, fs=SAMPLE_RATE_HZ, f0=NOTCH_F0_HZ, Q=NOTCH_Q)
+
+if USE_LOWPASS:
+    com_f = lowpass_filter(com_f, fs=SAMPLE_RATE_HZ, fc=LOWPASS_FC_HZ, Q=LOWPASS_Q)
+    diff_f = lowpass_filter(diff_f, fs=SAMPLE_RATE_HZ, fc=LOWPASS_FC_HZ, Q=LOWPASS_Q)
+    clean_f = lowpass_filter(clean_f, fs=SAMPLE_RATE_HZ, fc=LOWPASS_FC_HZ, Q=LOWPASS_Q)
+
+
+# =========================
+# قطع کردن خطوط در نمودار با NaN تا شکل خراب نشه
+# (هم برای خام، هم برای فیلترشده)
+# =========================
+if len(jump_idx):
+    # برای اینکه ایندکس‌ها بعد از insert به هم نریزه، از آخر به اول می‌ریم
+    for idx in jump_idx[::-1]:
+        n = np.insert(n, idx + 1, n[idx] + (k_guess if k_guess else 1))
+
+        com = np.insert(com, idx + 1, np.nan)
+        diff = np.insert(diff, idx + 1, np.nan)
+        clean = np.insert(clean, idx + 1, np.nan)
+
+        com_f = np.insert(com_f, idx + 1, np.nan)
+        diff_f = np.insert(diff_f, idx + 1, np.nan)
+        clean_f = np.insert(clean_f, idx + 1, np.nan)
+
+
+# =========================
+# رسم
+# =========================
+plt.figure(figsize=(12, 6))
+
+# خام
+# plt.plot(n, diff, label='DIFF raw (mV)', linewidth=1, alpha=0.35)
+# plt.plot(n, com,  label='COM  raw (mV)', linewidth=1, alpha=0.35)
+plt.plot(n, clean,label='CLEAN raw (mV)', linewidth=1, alpha=0.35)
+
+# فیلتر شده
+# plt.plot(n, diff_f, label='DIFF filtered (mV)', linewidth=1.3)
+# plt.plot(n, com_f, label='CLEAN filtered (mV)', linewidth=1.3)
+plt.plot(n, clean_f, label='CLEAN filtered (mV)', linewidth=1.3)
 
 plt.xlabel('Sample index n (real ADC samples)')
 plt.ylabel('mV')
-plt.title(f'Window = {REAL_SAMPLES_WINDOW} real samples | expected step ~ {k_guess}')
+plt.title(
+    f'Window = {REAL_SAMPLES_WINDOW} real samples | expected step ~ {k_guess} | '
+    f'fs={SAMPLE_RATE_HZ}Hz | notch={USE_NOTCH_50HZ} lp={USE_LOWPASS}'
+)
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
