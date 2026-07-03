@@ -34,6 +34,8 @@ USE_LOWPASS = False
 LOWPASS_FC_HZ = 50.0    # فرکانس قطع (Hz)
 LOWPASS_Q = 0.70710678   # Q ~ 0.707 (Butterworth)
 
+
+TEST_MODE = "diff"   # "common" یا "diff"
 # اگر خروجی تو float mV است:
 MODE = "float_mV"
 # اگر خروجی را به int (mV*1000) تبدیل کردی، این را بگذار:
@@ -338,69 +340,101 @@ def amp_peak_near_freq(x, fs=1000.0, f0=50.0, bw=3.0):
     return freqs[mask][idx], amp[mask][idx]
 
 
+
+# def sine_fit_amp(n, x, fs=1000.0, f0=50.0):
+#     n = np.asarray(n, dtype=float)
+#     x = np.asarray(x, dtype=float)
+
+#     mask = np.isfinite(x)
+
+#     n = n[mask]
+#     x = x[mask]
+
+#     t = n / fs
+#     w = 2.0 * np.pi * f0
+
+#     A = np.column_stack([
+#         np.sin(w * t),
+#         np.cos(w * t),
+#         np.ones_like(t)
+#     ])
+
+#     coef, *_ = np.linalg.lstsq(A, x, rcond=None)
+
+#     a, b, dc = coef
+
+#     amp_peak = np.sqrt(a*a + b*b)
+
+#     return amp_peak, dc
+
+
+
+def sine_fit_amp_at_freq(n, x, fs=1000.0, f0=50.0):
+    n = np.asarray(n, dtype=float)
+    x = np.asarray(x, dtype=float)
+
+    mask = np.isfinite(x)
+    n = n[mask]
+    x = x[mask]
+
+    t = n / fs
+    w = 2.0 * np.pi * f0
+
+    A = np.column_stack([
+        np.sin(w * t),
+        np.cos(w * t),
+        np.ones_like(t)
+    ])
+
+    coef, *_ = np.linalg.lstsq(A, x, rcond=None)
+    a, b, dc = coef
+
+    amp_peak = np.sqrt(a*a + b*b)
+    return amp_peak, dc
+
+
+def find_best_sine_freq(n, x, fs=1000.0, f_min=48.0, f_max=52.0, df=0.01):
+    freqs = np.arange(f_min, f_max + df, df)
+    amps = []
+
+    for f in freqs:
+        amp, _ = sine_fit_amp_at_freq(n, x, fs, f)
+        amps.append(amp)
+
+    amps = np.array(amps)
+    idx = np.argmax(amps)
+
+    return freqs[idx], amps[idx]
+
+
+
 print("\n===== Time-domain amplitude =====")
 print("COM min:", np.nanmin(com_calc))
 print("COM max:", np.nanmax(com_calc))
 print("COM p2p:", np.nanmax(com_calc) - np.nanmin(com_calc))
 print("COM peak_time:", (np.nanmax(com_calc) - np.nanmin(com_calc)) / 2)
 
-# print("\n===== Time-domain amplitude =====")
-# print("COM min:", np.nanmin(com))
-# print("COM max:", np.nanmax(com))
-# print("COM p2p:", np.nanmax(com) - np.nanmin(com))
-# print("COM peak_time:", (np.nanmax(com) - np.nanmin(com)) / 2)
 
-f_com, A50_com = amp_peak_near_freq(com_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-f_diff, A50_diff = amp_peak_near_freq(diff_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-f_noise, A50_noise = amp_peak_near_freq(noise_est_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-f_clean, A50_clean = amp_peak_near_freq(clean_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
 
-# f_com, A50_com = amp_peak_near_freq(com, SAMPLE_RATE_HZ, 50.0, 3.0)
-# f_diff, A50_diff = amp_peak_near_freq(diff, SAMPLE_RATE_HZ, 50.0, 3.0)
-# f_noise, A50_noise = amp_peak_near_freq(noise_est,SAMPLE_RATE_HZ,50.0,3.0)
-# f_clean, A50_clean = amp_peak_near_freq(clean, SAMPLE_RATE_HZ, 50.0, 3.0)
+f_best, A50_com = find_best_sine_freq(
+    n, com, SAMPLE_RATE_HZ, 48.0, 52.0, 0.01
+)
 
-print("\n===== FFT peak near 50Hz =====")
-print(f"COM   @ {f_com:.2f} Hz: {A50_com:.6f} mV peak")
-print(f"DIFF  @ {f_diff:.2f} Hz: {A50_diff:.6f} mV peak")
-print(f"NOISE @ {f_noise:.2f} Hz: {A50_noise:.6f} mV peak")
-print(f"CLEAN @ {f_clean:.2f} Hz: {A50_clean:.6f} mV peak")
+A50_diff, dc_diff = sine_fit_amp_at_freq(n, diff, SAMPLE_RATE_HZ, f_best)
+A50_noise, dc_noise = sine_fit_amp_at_freq(n, noise_est, SAMPLE_RATE_HZ, f_best)
+A50_clean, dc_clean = sine_fit_amp_at_freq(n, clean, SAMPLE_RATE_HZ, f_best)
+
+print("\n===== sine-fit amplitude near 50Hz =====")
+print(f"Best frequency from COM: {f_best:.2f} Hz")
+print(f"COM   @ {f_best:.2f}Hz: {A50_com:.6f} mV peak")
+print(f"DIFF  @ {f_best:.2f}Hz: {A50_diff:.6f} mV peak")
+print(f"NOISE @ {f_best:.2f}Hz: {A50_noise:.6f} mV peak")
+print(f"CLEAN @ {f_best:.2f}Hz: {A50_clean:.6f} mV peak")
 
 if A50_clean > 0:
     print(f"\nANC improvement = {20*np.log10(A50_diff/A50_clean):.2f} dB")
+    print(f"Effective rejection = {20*np.log10(A50_com/A50_clean):.2f} dB")
 
-# def amp_fft_at_freq(x, fs=1000.0, f0=50.0):
-#     x = np.asarray(x, dtype=float)
-
-#     x = x[np.isfinite(x)]
-#     x = x - np.mean(x)
-
-#     N = len(x)
-
-#     win = np.hanning(N)
-#     xw = x * win
-
-#     X = np.fft.rfft(xw)
-#     freqs = np.fft.rfftfreq(N, d=1.0/fs)
-
-#     k = np.argmin(np.abs(freqs - f0))
-
-#     amp_peak = 2.0 * np.abs(X[k]) / np.sum(win)
-
-#     return freqs[k], amp_peak
-
-
-# f_com, A50_com = amp_fft_at_freq(com, SAMPLE_RATE_HZ, 50.0)
-# f_diff, A50_diff = amp_fft_at_freq(diff, SAMPLE_RATE_HZ, 50.0)
-# f_clean, A50_clean = amp_fft_at_freq(clean, SAMPLE_RATE_HZ, 50.0)
-
-# print("\n===== 50Hz FFT amplitude =====")
-# print(f"COM   @ {f_com:.2f} Hz: {A50_com:.6f} mV peak")
-# print(f"DIFF  @ {f_diff:.2f} Hz: {A50_diff:.6f} mV peak")
-# print(f"CLEAN @ {f_clean:.2f} Hz: {A50_clean:.6f} mV peak")
-
-# print(f"\nANC improvement = "
-#       f"{20*np.log10(A50_diff/A50_clean):.2f} dB")
 
 # =========================
 # تحلیل پرش‌ها (سکته‌ها) با توجه به n

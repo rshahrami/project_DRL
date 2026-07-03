@@ -12,7 +12,7 @@
 #define ADS131_REG_CH3_CFG   0x08
 
 #define ADS131_WORD_BYTES   3
-#define ADS131_FRAME_WORDS  6
+#define ADS131_FRAME_WORDS  5
 #define ADS131_FRAME_BYTES  (ADS131_WORD_BYTES * ADS131_FRAME_WORDS)
 
 #define ADS131_REG_CLOCK 0x03
@@ -259,9 +259,19 @@ esp_err_t ads131_init(
     return ESP_OK;
 }
 
+// esp_err_t ads131_command(ads131_t *dev, uint16_t cmd)
+// {
+//     uint8_t tx[2] = { (uint8_t)(cmd >> 8), (uint8_t)(cmd & 0xFF) };
+//     return spi_xfer(dev, tx, NULL, sizeof(tx));
+// }
+
 esp_err_t ads131_command(ads131_t *dev, uint16_t cmd)
 {
-    uint8_t tx[2] = { (uint8_t)(cmd >> 8), (uint8_t)(cmd & 0xFF) };
+    uint8_t tx[3] = {
+        (uint8_t)(cmd >> 8),
+        (uint8_t)(cmd & 0xFF),
+        0x00
+    };
     return spi_xfer(dev, tx, NULL, sizeof(tx));
 }
 
@@ -272,8 +282,8 @@ bool ads131_wait_drdy(ads131_t *dev, TickType_t timeout)
 
 esp_err_t ads131_read_frame(ads131_t *dev, ads131_frame_t *frame)
 {
-    uint8_t rx[15] = {0};
-    uint8_t tx[15] = {0};
+    uint8_t rx[ADS131_FRAME_BYTES] = {0};
+    uint8_t tx[ADS131_FRAME_BYTES] = {0};
 
     esp_err_t ret = spi_xfer(dev, tx, rx, sizeof(rx));
     if (ret != ESP_OK) return ret;

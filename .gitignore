@@ -4,5 +4,8 @@
 build/
 
 plot/*
-!plot/plot.py
-!plot_with_filters.py
+# !plot/plot.py
+!plot/*.py
+*.pdf
+*.png
+*.old

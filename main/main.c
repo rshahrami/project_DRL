@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -92,6 +93,40 @@ static void ads131_start_clkin(void)
 }
 
 /* ================== reader task ================== */
+// void reader_task(void *arg)
+// {
+//     ads131_t adc_dev;
+//     ads131_frame_t frame;
+
+//     ads131_init(&adc_dev,
+//                 SPI2_HOST,
+//                 15, 16, 14,
+//                 GPIO_NUM_12, GPIO_NUM_13, GPIO_NUM_11,
+//                 SPI_FREQ_HZ);
+
+//     ads131_set_gain_1_all(&adc_dev);
+//     ads131_set_data_rate(&adc_dev, ADS131_RATE_1KSPS);
+
+//     ESP_LOGI(TAG, "ADS131 sampling started (%d SPS)", TARGET_SPS);
+
+//     uint32_t n = 0;
+
+//     while (1) {
+//         if (ads131_wait_drdy(&adc_dev, portMAX_DELAY)) {
+//             if (ads131_read_frame(&adc_dev, &frame) == ESP_OK) {
+
+//                 float ch0 = ads131_convert_to_mV(frame.ch[0]);
+//                 float ch1 = ads131_convert_to_mV(frame.ch[1]);
+//                 float ch2 = ads131_convert_to_mV(frame.ch[2]);
+//                 float ch3 = ads131_convert_to_mV(frame.ch[3]);
+
+//                 printf("%lu,%.3f,%.3f,%.3f,%.3f\n",
+//                        (unsigned long)n++,
+//                        ch0, ch1, ch2, ch3);
+//             }
+//         }
+//     }
+// }
 
 void reader_task(void *arg)
 {
@@ -135,19 +170,29 @@ void process_task(void *arg)
 
     anc_init(&anc, fs);
 
-    /* اگر خواستی دستی تیون کنی */
-    anc.mu      = 0.05f;     // پایدارتر از 0.10
-    anc.ref_lim = 1200.0f;
-    anc.leak    = 0.0005f;
+    //     /* اگر خواستی دستی تیون کنی */
+    // anc.mu      = 0.003f;     // پایدارتر از 0.10
+    // anc.ref_lim = 600.0f;
+    // anc.leak    = 0.00005f;
+
+    // /* Q کمتر => تحمل لغزش بیشتر */
+    // anc_bandpass_init(&anc, fs, 50.0f, 2.5f);
+
+
+            /* اگر خواستی دستی تیون کنی */
+    anc.mu      = 0.01f;     // پایدارتر از 0.10
+    anc.ref_lim = 300.0f;
+    anc.leak    = 0.00005f;
 
     /* Q کمتر => تحمل لغزش بیشتر */
-    anc_bandpass_init(&anc, fs, 50.0f, 1.3f);
+    anc_bandpass_init(&anc, fs, 50.0f, 3.0f);
+
 
     lpf4_init(&lpf_clean, fs, 100.0f);
 
     const uint32_t warmup_samp  = (uint32_t)(0.5f * fs);   // 0.5s
     const uint32_t capture_samp = 3000;                    // 3s واقعی
-    const uint32_t K = 5;                                  // ✅ تا 100Hz
+    const uint32_t K = 1;                                  // ✅ تا 100Hz
 
     static uint32_t n = 0;
     bool capturing = false;
@@ -170,12 +215,38 @@ void process_task(void *arg)
         if (com_bp >  anc.ref_lim) com_bp =  anc.ref_lim;
         if (com_bp < -anc.ref_lim) com_bp = -anc.ref_lim;
 
-        float noise_est = anc_fir_nlms(&anc, com_bp, diff_bp);
+//////////////////////////////////////////////////////////////////////////////
+        static float com_pwr = 0.0f;
 
-        /* حذف از سیگنال اصلی */
-        float clean    = diff - noise_est;
+        com_pwr = 0.995f * com_pwr + 0.005f * (com_bp * com_bp);
+        float com_rms = sqrtf(com_pwr);
+
+        /* Soft gate:
+        اگر COM خیلی کم باشد، ANC تقریباً خاموش است.
+        اگر COM قوی باشد، ANC کامل فعال است.
+        */
+        float gate = (com_rms - 2.0f) / (8.0f - 2.0f);
+
+        if (gate < 0.0f) gate = 0.0f;
+        if (gate > 1.0f) gate = 1.0f;
+
+        // float noise_est = anc_fir_nlms(&anc, com_bp, diff_bp);
+        float noise_est = 0.0f;
+        // float clean = diff - gate * noise_est;
+    
+        float clean = diff;
         float clean_lp = lpf4_process(&lpf_clean, clean);
 
+
+
+
+
+        // float noise_est = anc_fir_nlms(&anc, com_bp, diff_bp);
+
+        // /* حذف از سیگنال اصلی */
+        // float clean    = diff - noise_est;
+        // float clean_lp = lpf4_process(&lpf_clean, clean);
+//////////////////////////////////////////////////////////////////////////////
         uint32_t cur_n = n++;
 
         if (!capturing) {
@@ -188,10 +259,13 @@ void process_task(void *arg)
 
         if (cap_count < capture_samp) {
             if ((cur_n % K) == 0) {
-                printf("%lu,%.3f,%.3f,%.3f\n",
-                       (unsigned long)cur_n, com, diff, clean_lp);
-
-                if ((cap_count & 0x3F) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+                printf("%lu,%.2f,%.2f\n",
+                    //    (unsigned long)cur_n, com, diff, noise_est, clean_lp);
+                       (unsigned long)cur_n, com, diff);
+                // printf("%lu,%.3f,%.3f,%.3f,%.3f\n",
+                //     //    (unsigned long)cur_n, com, diff, noise_est, clean_lp);
+                //        (unsigned long)cur_n, com, diff, noise_est, clean);
+                // if ((cap_count & 0x3F) == 0) vTaskDelay(pdMS_TO_TICKS(1));
             }
             cap_count++;
         } else {

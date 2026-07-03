@@ -12,7 +12,7 @@ BAUD = 921600
 # =========================
 # تنظیمات پنجره و تحلیل
 # =========================
-REAL_SAMPLES_WINDOW = 5000   # مثلاً سه سیکل 1Hz در 1kSPS
+# REAL_SAMPLES_WINDOW = 1000   # مثلاً سه سیکل 1Hz در 1kSPS
 WARMUP_SKIP = 0             # اگر ESP خودش warmup را چاپ نمی‌کند، اینجا می‌توانی n اولیه را نادیده بگیری
 
 # =========================
@@ -33,6 +33,14 @@ NOTCH_Q = 30.0           # بزرگ‌تر => ناچ باریک‌تر
 USE_LOWPASS = False
 LOWPASS_FC_HZ = 50.0    # فرکانس قطع (Hz)
 LOWPASS_Q = 0.70710678   # Q ~ 0.707 (Butterworth)
+
+
+TEST_MODE = "diff"
+TEST_FREQ_HZ = 199.82  # این را هر بار مطابق فانکشن‌ژنراتور عوض کن
+VIN_DIFF_MV = 7.0     # دامنه ورودی تفاضلی، mV peak
+
+REAL_SAMPLES_WINDOW = int(max(5000, 5 * SAMPLE_RATE_HZ / TEST_FREQ_HZ))
+
 
 # اگر خروجی تو float mV است:
 MODE = "float_mV"
@@ -141,8 +149,10 @@ def lowpass_filter(x, fs, fc, Q=0.70710678):
 # حالت float:  n,com,diff,clean  (مثلاً: 18670,7.259,-50.089,-1.543)
 # pat_float = re.compile(rb'^\s*(\d+)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$')
 
-pat_float = re.compile(rb'^\s*(\d+)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$')
-
+# pat_float = re.compile(rb'^\s*(\d+)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$')
+pat_float = re.compile(
+rb'^\s*(\d+)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$'
+)
 # حالت int: n,com_i,diff_i,clean_i (مثلاً mV*1000)
 pat_int   = re.compile(rb'^\s*(\d+)\s*,\s*([-+]?\d+)\s*,\s*([-+]?\d+)\s*,\s*([-+]?\d+)\s*$')
 
@@ -165,10 +175,11 @@ def parse_data_line(b: bytes):
         n         = int(m.group(1))
         com       = float(m.group(2))
         diff      = float(m.group(3))
-        noise_est = float(m.group(4))
-        clean     = float(m.group(5))
+        # noise_est = float(m.group(4))
+        # clean     = float(m.group(5))
 
-        return n, com, diff, noise_est, clean
+        # return n, com, diff, noise_est, clean
+        return n, com, diff
         # n = int(m.group(1))
         # com = float(m.group(2))
         # diff = float(m.group(3))
@@ -233,7 +244,10 @@ with serial.Serial(PORT, BAUD, timeout=1) as ser:
             continue
 
         # n, com, diff, clean = parsed
-        n, com, diff, noise_est, clean = parsed
+        # n, com, diff, noise_est, clean = parsed
+        n, com, diff = parsed
+        noise_est = 0.0
+        clean = diff
 
         # تعیین شروع پنجره
         if n_start is None:
@@ -338,69 +352,298 @@ def amp_peak_near_freq(x, fs=1000.0, f0=50.0, bw=3.0):
     return freqs[mask][idx], amp[mask][idx]
 
 
-print("\n===== Time-domain amplitude =====")
-print("COM min:", np.nanmin(com_calc))
-print("COM max:", np.nanmax(com_calc))
-print("COM p2p:", np.nanmax(com_calc) - np.nanmin(com_calc))
-print("COM peak_time:", (np.nanmax(com_calc) - np.nanmin(com_calc)) / 2)
 
-# print("\n===== Time-domain amplitude =====")
-# print("COM min:", np.nanmin(com))
-# print("COM max:", np.nanmax(com))
-# print("COM p2p:", np.nanmax(com) - np.nanmin(com))
-# print("COM peak_time:", (np.nanmax(com) - np.nanmin(com)) / 2)
-
-f_com, A50_com = amp_peak_near_freq(com_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-f_diff, A50_diff = amp_peak_near_freq(diff_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-f_noise, A50_noise = amp_peak_near_freq(noise_est_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-f_clean, A50_clean = amp_peak_near_freq(clean_calc, SAMPLE_RATE_HZ, 50.0, 3.0)
-
-# f_com, A50_com = amp_peak_near_freq(com, SAMPLE_RATE_HZ, 50.0, 3.0)
-# f_diff, A50_diff = amp_peak_near_freq(diff, SAMPLE_RATE_HZ, 50.0, 3.0)
-# f_noise, A50_noise = amp_peak_near_freq(noise_est,SAMPLE_RATE_HZ,50.0,3.0)
-# f_clean, A50_clean = amp_peak_near_freq(clean, SAMPLE_RATE_HZ, 50.0, 3.0)
-
-print("\n===== FFT peak near 50Hz =====")
-print(f"COM   @ {f_com:.2f} Hz: {A50_com:.6f} mV peak")
-print(f"DIFF  @ {f_diff:.2f} Hz: {A50_diff:.6f} mV peak")
-print(f"NOISE @ {f_noise:.2f} Hz: {A50_noise:.6f} mV peak")
-print(f"CLEAN @ {f_clean:.2f} Hz: {A50_clean:.6f} mV peak")
-
-if A50_clean > 0:
-    print(f"\nANC improvement = {20*np.log10(A50_diff/A50_clean):.2f} dB")
-
-# def amp_fft_at_freq(x, fs=1000.0, f0=50.0):
+# def sine_fit_amp(n, x, fs=1000.0, f0=50.0):
+#     n = np.asarray(n, dtype=float)
 #     x = np.asarray(x, dtype=float)
 
-#     x = x[np.isfinite(x)]
-#     x = x - np.mean(x)
+#     mask = np.isfinite(x)
 
-#     N = len(x)
+#     n = n[mask]
+#     x = x[mask]
 
-#     win = np.hanning(N)
-#     xw = x * win
+#     t = n / fs
+#     w = 2.0 * np.pi * f0
 
-#     X = np.fft.rfft(xw)
-#     freqs = np.fft.rfftfreq(N, d=1.0/fs)
+#     A = np.column_stack([
+#         np.sin(w * t),
+#         np.cos(w * t),
+#         np.ones_like(t)
+#     ])
 
-#     k = np.argmin(np.abs(freqs - f0))
+#     coef, *_ = np.linalg.lstsq(A, x, rcond=None)
 
-#     amp_peak = 2.0 * np.abs(X[k]) / np.sum(win)
+#     a, b, dc = coef
 
-#     return freqs[k], amp_peak
+#     amp_peak = np.sqrt(a*a + b*b)
+
+#     return amp_peak, dc
 
 
-# f_com, A50_com = amp_fft_at_freq(com, SAMPLE_RATE_HZ, 50.0)
-# f_diff, A50_diff = amp_fft_at_freq(diff, SAMPLE_RATE_HZ, 50.0)
-# f_clean, A50_clean = amp_fft_at_freq(clean, SAMPLE_RATE_HZ, 50.0)
 
-# print("\n===== 50Hz FFT amplitude =====")
-# print(f"COM   @ {f_com:.2f} Hz: {A50_com:.6f} mV peak")
-# print(f"DIFF  @ {f_diff:.2f} Hz: {A50_diff:.6f} mV peak")
-# print(f"CLEAN @ {f_clean:.2f} Hz: {A50_clean:.6f} mV peak")
+def sine_fit_amp_at_freq(x, fs=1000.0, f0=50.0):
+    x = np.asarray(x, dtype=float)
+    x = x[np.isfinite(x)]
 
-# print(f"\nANC improvement = "
-#       f"{20*np.log10(A50_diff/A50_clean):.2f} dB")
+    x = x - np.mean(x)
+
+    t = np.arange(len(x)) / fs
+    w = 2.0 * np.pi * f0
+
+    A = np.column_stack([
+        np.sin(w * t),
+        np.cos(w * t)
+    ])
+
+    coef, *_ = np.linalg.lstsq(A, x, rcond=None)
+    a, b = coef
+
+    amp_peak = np.sqrt(a*a + b*b)
+    return amp_peak
+
+
+
+# Aout_diff = sine_fit_amp_at_freq(
+#     diff, SAMPLE_RATE_HZ, TEST_FREQ_HZ
+# )
+
+# gain = Aout_diff / VIN_DIFF_MV
+# gain_db = 20 * np.log10(gain)
+
+# print("\n===== Frequency response point =====")
+# print(f"Test frequency: {TEST_FREQ_HZ:.2f} Hz")
+# print(f"Input amplitude: {VIN_DIFF_MV:.6f} mV peak")
+# print(f"Output DIFF amplitude: {Aout_diff:.6f} mV peak")
+# print(f"Gain: {gain:.6f}")
+# print(f"Gain dB: {gain_db:.3f} dB")
+
+def sine_fit_waveform(x, fs=1000.0, f0=50.0):
+    x = np.asarray(x, dtype=float)
+    x = x[np.isfinite(x)]
+
+    dc = np.mean(x)
+    x0 = x - dc
+
+    t = np.arange(len(x0)) / fs
+    w = 2.0 * np.pi * f0
+
+    A = np.column_stack([
+        np.sin(w * t),
+        np.cos(w * t)
+    ])
+
+    coef, *_ = np.linalg.lstsq(A, x0, rcond=None)
+    a, b = coef
+
+    y_fit = a*np.sin(w*t) + b*np.cos(w*t) + dc
+    amp_peak = np.sqrt(a*a + b*b)
+
+    return t, y_fit, amp_peak, dc
+
+
+
+
+# Aout_diff = sine_fit_amp_at_freq(
+#     diff, SAMPLE_RATE_HZ, TEST_FREQ_HZ
+# )
+
+
+
+def find_best_sine_freq_around(x, fs=1000.0, f_center=50.0, span=1.0, df=0.01):
+    freqs = np.arange(f_center - span, f_center + span + df, df)
+    amps = []
+
+    for f in freqs:
+        amp = sine_fit_amp_at_freq(x, fs, f)
+        amps.append(amp)
+
+    amps = np.array(amps)
+    idx = np.argmax(amps)
+
+    return freqs[idx], amps[idx]
+
+
+if TEST_FREQ_HZ < 2:
+    SEARCH_SPAN_HZ = 0.2
+elif TEST_FREQ_HZ < 20:
+    SEARCH_SPAN_HZ = 1.5
+else:
+    SEARCH_SPAN_HZ = 2.0
+
+
+f_best, Aout_diff = find_best_sine_freq_around(
+    diff_calc,
+    fs=SAMPLE_RATE_HZ,
+    f_center=TEST_FREQ_HZ,
+    span=SEARCH_SPAN_HZ,
+    df=0.01
+)
+
+gain = Aout_diff / VIN_DIFF_MV
+gain_db = 20 * np.log10(gain)
+
+
+t_fit, diff_fit, Aout_diff2, dc_diff2 = sine_fit_waveform(
+    diff_calc,
+    SAMPLE_RATE_HZ,
+    f_best
+)
+
+td_amp = (np.nanmax(diff_calc) - np.nanmin(diff_calc)) / 2
+
+print(f"Time-domain peak estimate: {td_amp:.6f} mV")
+print(f"Fit / time-domain ratio: {Aout_diff / td_amp:.3f}")
+
+print("\n===== Frequency response point =====")
+print(f"Nominal test frequency: {TEST_FREQ_HZ:.2f} Hz")
+print(f"Estimated frequency: {f_best:.2f} Hz")
+print(f"Input amplitude: {VIN_DIFF_MV:.6f} mV peak")
+print(f"Output DIFF amplitude: {Aout_diff:.6f} mV peak")
+print(f"Gain: {gain:.6f}")
+print(f"Gain dB: {gain_db:.3f} dB")
+
+# t_fit, diff_fit, Aout_diff2, dc_diff2 = sine_fit_waveform(
+#     diff, SAMPLE_RATE_HZ, TEST_FREQ_HZ
+# )
+
+# print("\n===== Frequency response point =====")
+# print(f"Test frequency: {TEST_FREQ_HZ:.2f} Hz")
+# print(f"Input amplitude: {VIN_DIFF_MV:.6f} mV peak")
+# print(f"Output DIFF amplitude: {Aout_diff:.6f} mV peak")
+# print(f"Gain: {gain:.6f}")
+# print(f"Gain dB: {gain_db:.3f} dB")
+
+
+
+
+
+# n_fit, diff_fit, Aout_diff, dc_diff = sine_fit_waveform(
+#     n, diff, SAMPLE_RATE_HZ, TEST_FREQ_HZ
+# )
+
+# def find_best_sine_freq(n, x, fs=1000.0, f_min=48.0, f_max=52.0, df=0.01):
+#     freqs = np.arange(f_min, f_max + df, df)
+#     amps = []
+
+#     for f in freqs:
+#         amp, _ = sine_fit_amp_at_freq(n, x, fs, f)
+#         amps.append(amp)
+
+#     amps = np.array(amps)
+#     idx = np.argmax(amps)
+
+#     return freqs[idx], amps[idx]
+
+
+
+# def sine_fit_waveform(n, x, fs=1000.0, f0=10.0):
+#     n = np.asarray(n, dtype=float)
+#     x = np.asarray(x, dtype=float)
+
+#     mask = np.isfinite(x)
+#     n_fit = n[mask]
+#     x_fit = x[mask]
+
+#     t = n_fit / fs
+#     w = 2.0 * np.pi * f0
+
+#     A = np.column_stack([
+#         np.sin(w * t),
+#         np.cos(w * t),
+#         np.ones_like(t)
+#     ])
+
+#     coef, *_ = np.linalg.lstsq(A, x_fit, rcond=None)
+#     a, b, dc = coef
+
+#     y_fit = a*np.sin(w*t) + b*np.cos(w*t) + dc
+#     amp_peak = np.sqrt(a*a + b*b)
+
+#     return n_fit, y_fit, amp_peak, dc
+
+
+# Aout_diff, dc_diff = sine_fit_amp_at_freq(
+#     n, diff, SAMPLE_RATE_HZ, TEST_FREQ_HZ
+# )
+
+# gain = Aout_diff / VIN_DIFF_MV
+# gain_db = 20 * np.log10(gain)
+
+# t_fit, diff_fit, Aout_diff2, dc_diff2 = sine_fit_waveform(
+#     diff, SAMPLE_RATE_HZ, TEST_FREQ_HZ
+# )
+
+# print("\n===== Frequency response point =====")
+# print(f"Test frequency: {TEST_FREQ_HZ:.2f} Hz")
+# print(f"Input amplitude: {VIN_DIFF_MV:.6f} mV peak")
+# print(f"Output DIFF amplitude: {Aout_diff:.6f} mV peak")
+# print(f"Gain: {gain:.6f}")
+# print(f"Gain dB: {gain_db:.3f} dB")
+
+# print("\n===== Time-domain amplitude =====")
+# print("COM min:", np.nanmin(com_calc))
+# print("COM max:", np.nanmax(com_calc))
+# print("COM p2p:", np.nanmax(com_calc) - np.nanmin(com_calc))
+# print("COM peak_time:", (np.nanmax(com_calc) - np.nanmin(com_calc)) / 2)
+
+
+
+
+# if TEST_MODE == "common":
+#     f_best, A50_com = find_best_sine_freq(
+#         n, com, SAMPLE_RATE_HZ, 48.0, 52.0, 0.01
+#     )
+#     A50_diff, dc_diff = sine_fit_amp_at_freq(n, diff, SAMPLE_RATE_HZ, f_best)
+
+# elif TEST_MODE == "diff":
+#     f_best, A50_diff = find_best_sine_freq(
+#         n, diff, SAMPLE_RATE_HZ, 48.0, 52.0, 0.01
+#     )
+#     A50_com, dc_com = sine_fit_amp_at_freq(n, com, SAMPLE_RATE_HZ, f_best)
+
+# else:
+#     raise ValueError("TEST_MODE must be 'common' or 'diff'")
+
+# A50_noise, dc_noise = sine_fit_amp_at_freq(n, noise_est, SAMPLE_RATE_HZ, f_best)
+# A50_clean, dc_clean = sine_fit_amp_at_freq(n, clean, SAMPLE_RATE_HZ, f_best)
+
+# print("\n===== sine-fit amplitude near 50Hz =====")
+# print(f"TEST_MODE: {TEST_MODE}")
+# print(f"Best frequency from {'COM' if TEST_MODE == 'common' else 'DIFF'}: {f_best:.2f} Hz")
+# print(f"COM   @ {f_best:.2f}Hz: {A50_com:.6f} mV peak")
+# print(f"DIFF  @ {f_best:.2f}Hz: {A50_diff:.6f} mV peak")
+# print(f"NOISE @ {f_best:.2f}Hz: {A50_noise:.6f} mV peak")
+# print(f"CLEAN @ {f_best:.2f}Hz: {A50_clean:.6f} mV peak")
+
+# if TEST_MODE == "common" and A50_clean > 0:
+#     print(f"\nEffective rejection = {20*np.log10(A50_com/A50_clean):.2f} dB")
+
+# if TEST_MODE == "diff":
+#     print("\nDifferential-mode test: use DIFF amplitude to compute Gdiff.")
+
+
+# # f_best, A50_com = find_best_sine_freq(
+# #     n, com, SAMPLE_RATE_HZ, 48.0, 52.0, 0.01
+# # )
+
+# # A50_diff, dc_diff = sine_fit_amp_at_freq(n, diff, SAMPLE_RATE_HZ, f_best)
+# # A50_noise, dc_noise = sine_fit_amp_at_freq(n, noise_est, SAMPLE_RATE_HZ, f_best)
+# # A50_clean, dc_clean = sine_fit_amp_at_freq(n, clean, SAMPLE_RATE_HZ, f_best)
+
+
+
+
+# # print("\n===== sine-fit amplitude near 50Hz =====")
+# # print(f"Best frequency from COM: {f_best:.2f} Hz")
+# # print(f"COM   @ {f_best:.2f}Hz: {A50_com:.6f} mV peak")
+# # print(f"DIFF  @ {f_best:.2f}Hz: {A50_diff:.6f} mV peak")
+# # print(f"NOISE @ {f_best:.2f}Hz: {A50_noise:.6f} mV peak")
+# # print(f"CLEAN @ {f_best:.2f}Hz: {A50_clean:.6f} mV peak")
+
+# # if A50_clean > 0:
+# #     print(f"\nANC improvement = {20*np.log10(A50_diff/A50_clean):.2f} dB")
+# #     print(f"Effective rejection = {20*np.log10(A50_com/A50_clean):.2f} dB")
+
 
 # =========================
 # تحلیل پرش‌ها (سکته‌ها) با توجه به n
@@ -477,26 +720,62 @@ if len(jump_idx):
 # =========================
 # رسم
 # =========================
-plt.figure(figsize=(12, 6))
+# plt.figure(figsize=(10, 4))
 
-# خام
-# plt.plot(n, diff, label='DIFF raw (mV)', linewidth=1, alpha=0.35)
-# plt.plot(n, com,  label='COM  raw (mV)', linewidth=1, alpha=0.35)
-# plt.plot(n, clean,label='CLEAN raw (mV)', linewidth=1, alpha=0.35)
+# plt.plot(n, diff, label='DIFF measured (mV)', linewidth=1, alpha=0.45)
+# plt.plot(n_fit, diff_fit, label=f'Sine fit @ {TEST_FREQ_HZ:.1f} Hz', linewidth=2)
 
-# فیلتر شده
-plt.plot(n, diff_f, label='DIFF filtered (mV)', linewidth=1.3)
-plt.plot(n, com_f, label='COM filtered (mV)', linewidth=1.3)
-plt.plot(n, noise_est_f, label='NOISE_EST filtered (mV)', linewidth=1.2)
-plt.plot(n, clean_f, label='CLEAN filtered (mV)', linewidth=1.3)
 
-plt.xlabel('Sample index n (real ADC samples)')
+t = np.arange(len(diff_calc)) / SAMPLE_RATE_HZ
+
+plt.figure(figsize=(10, 4))
+plt.plot(t, diff_calc, label='DIFF measured (mV)', linewidth=1, alpha=0.45)
+# plt.plot(t_fit, diff_fit, label=f'Sine fit @ {TEST_FREQ_HZ:.1f} Hz', linewidth=2)
+plt.plot(t_fit, diff_fit, label=f'Sine fit @ {f_best:.2f} Hz', linewidth=2)
+
+plt.xlabel('Time (s)')
 plt.ylabel('mV')
-plt.title(
-    f'Window = {REAL_SAMPLES_WINDOW} real samples | expected step ~ {k_guess} | '
-    f'fs={SAMPLE_RATE_HZ}Hz | notch={USE_NOTCH_50HZ} lp={USE_LOWPASS}'
-)
+plt.title(f'Differential response at {TEST_FREQ_HZ:.1f} Hz')
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
 plt.show()
+
+
+
+
+# plt.xlabel('Sample index n')
+# plt.ylabel('mV')
+# plt.title(f'Differential response at {TEST_FREQ_HZ:.1f} Hz')
+# plt.grid(True)
+# plt.legend()
+# plt.tight_layout()
+# plt.show()
+
+
+
+
+
+# plt.figure(figsize=(12, 6))
+
+# # خام
+# # plt.plot(n, diff, label='DIFF raw (mV)', linewidth=1, alpha=0.35)
+# # plt.plot(n, com,  label='COM  raw (mV)', linewidth=1, alpha=0.35)
+# # plt.plot(n, clean,label='CLEAN raw (mV)', linewidth=1, alpha=0.35)
+
+# # فیلتر شده
+# plt.plot(n, diff_f, label='DIFF filtered (mV)', linewidth=1.3)
+# plt.plot(n, com_f, label='COM filtered (mV)', linewidth=1.3)
+# plt.plot(n, noise_est_f, label='NOISE_EST filtered (mV)', linewidth=1.2)
+# plt.plot(n, clean_f, label='CLEAN filtered (mV)', linewidth=1.3)
+
+# plt.xlabel('Sample index n (real ADC samples)')
+# plt.ylabel('mV')
+# plt.title(
+#     f'Window = {REAL_SAMPLES_WINDOW} real samples | expected step ~ {k_guess} | '
+#     f'fs={SAMPLE_RATE_HZ}Hz | notch={USE_NOTCH_50HZ} lp={USE_LOWPASS}'
+# )
+# plt.grid(True)
+# plt.legend()
+# plt.tight_layout()
+# plt.show()
